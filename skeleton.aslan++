@@ -62,7 +62,6 @@ entity Session(Webapplication, Database, Filesystem: agent) {
 entity Webapplication(Actor, Database, Filesystem: agent) {
 symbols
 		@webappsymbols
-		Cookie1, Cookie2 : message;
 		WebNonce : text;
 		Entity : agent;
 
