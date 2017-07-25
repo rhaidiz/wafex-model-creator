@@ -119,8 +119,10 @@ class BurpExtender(IBurpExtender, IContextMenuFactory):
         # - MAPPING from abstract to concrete (which will be 1:1 when this plugin is used)
 
         # from byte to char Request and Response
-        http_request = "".join(chr(b) for b in msg.getRequest())
-        http_response = "".join(chr(b) for b in msg.getResponse())
+        # for some reason b can be a negative value causing a crash
+        # so I put a check to ensure b is in the right range 
+        http_request = "".join(chr(b) for b in msg.getRequest() if b >= 0 and b <= 256)
+        http_response = "".join(chr(b) for b in msg.getResponse() if b >=0 and b <= 256)
 
         request_parser = HttpParser()
         request_parser.execute(http_request,len(http_request))
