@@ -45,6 +45,9 @@ class BurpExtender(IBurpExtender, IContextMenuFactory):
     taglist = []
     tag = "tag"
     i_tag = 0
+
+    var_tag = "Var_"
+    var_tag_i = 0
     
     branches = ""
     params_keys = []
@@ -102,16 +105,21 @@ class BurpExtender(IBurpExtender, IContextMenuFactory):
     def generateWAFExModel(self,messages):
         # reset some variables
         self._webapp_branch = ""
+        self._client_branch = ""
         self.i_tag = 0
+        print("create model")
         # start the generation
-        for msg in messages:
-            # from byte to char Request and Response
-            # for some reason b can be a negative value causing a crash
-            # so I put a check to ensure b is in the right range 
-            http_request = "".join(chr(b) for b in msg.getRequest() if b >= 0 and b <= 256)
-            http_response = "".join(chr(b) for b in msg.getResponse() if b >=0 and b <= 256)
-            protocol = msg.getHttpService().getProtocol()
-            self.parseHttpRequestResponse(http_request, http_response, protocol)
+        try:
+            for msg in messages:
+                # from byte to char Request and Response
+                # for some reason b can be a negative value causing a crash
+                # so I put a check to ensure b is in the right range 
+                http_request = "".join(chr(b) for b in msg.getRequest() if b >= 0 and b <= 256)
+                http_response = "".join(chr(b) for b in msg.getResponse() if b >=0 and b <= 256)
+                protocol = msg.getHttpService().getProtocol()
+                self.parseHttpRequestResponse(http_request, http_response, protocol)
+        except Exception as e:
+            print(e)
 
 
 
@@ -150,17 +158,14 @@ class BurpExtender(IBurpExtender, IContextMenuFactory):
         if query_string:
             # saving the concrete parameters
             self.params_concrete = [couple.split("=") for couple in query_string.split("&")]
-            aslanpp_params = ""
-            for c in self.params_concrete:
-                key = re.sub("[^a-zA-Z0-9]","", c[0].lower())
-                value = ("none" if not c[1] else re.sub("[^a-zA-Z0-9]","",c[1].capitalize()))
-                # key is a public constant
-                # value is a public variable
-                self.aslanpp_nonpublic_constants.add(key)
-                self.aslanpp_variables.add(value)
 
-                # ASLan++ parameters
-                aslanpp_params += key + ".s." + value + ".s."
+            # parse the parameters and retrieve ASLan++ code, constants, variables and mapping
+            aslanpp_params, constants, variables, mapping = self.parse_parameters(self.params_concrete)
+
+            self.aslanpp_nonpublic_constants |= constants 
+            self.aslanpp_variables |= variables
+            self.mapping += mapping
+
             # save ASLan++ parameters
             self.params = "none" if not aslanpp_params else aslanpp_params[:-3]
 
@@ -170,20 +175,13 @@ class BurpExtender(IBurpExtender, IContextMenuFactory):
 
             simple_cookie = Cookie.SimpleCookie(cookie_request) 
             self.cookie_concrete = [[item,simple_cookie[item].value] for item in simple_cookie]
-            aslanpp_cookie = ""
-            for c in self.cookie_concrete:
-                key = re.sub("[^a-zA-Z0-9]","", c[0].lower())
-                value = ("none" if not c[1] else re.sub("[^a-zA-Z0-9]","",c[1].capitalize()))
+            
+            # parse the parameters and retrieve ASLan++ code, constants, variables and mapping
+            aslanpp_cookie, constants, variables, mapping = self.parse_parameters(self.cookie_concrete)
 
-                # ASLan++ constants and variables
-                self.aslanpp_nonpublic_constants.add(key)
-                self.aslanpp_variables.add(value)
-
-                # ASLan++ code cookie
-                aslanpp_cookie += key + ".s." + value + ".s."
-
-                # concretization mapping
-                self.mapping.append([key,key])
+            self.aslanpp_nonpublic_constants |= constants 
+            self.aslanpp_variables |= variables
+            self.mapping += mapping
 
             self.cookie = "none" if not aslanpp_cookie else aslanpp_cookie[:-3]
         except KeyError:
@@ -207,7 +205,7 @@ class BurpExtender(IBurpExtender, IContextMenuFactory):
         # and the client is receiving a different page back in the response
         try:
             self.return_page = urlparse(response_parser.get_headers()['Location']).path.partition("?")[0].replace("/","_")
-            is_nonpublic = self.is_nonpublic(self.return_page)
+            is_nonpublic = self.is_nonpublic(response_parser,"")
             if is_nonpublic:
                 self.aslanpp_nonpublic_constants.add(self.return_page)
             else:
@@ -221,20 +219,13 @@ class BurpExtender(IBurpExtender, IContextMenuFactory):
             # parse new cookie
             simple_cookie = Cookie.SimpleCookie(set_cookie_header) 
             cookies = [[item,simple_cookie[item].value] for item in simple_cookie]
-            aslanpp_cookie = ""
-            for c in cookies:
-                key = re.sub("[^a-zA-Z0-9]","", c[0].lower())
-                value = ("none" if not c[1] else re.sub("[^a-zA-Z0-9]","",c[1].capitalize()))
+            
+            # parse the parameters and retrieve ASLan++ code, constants, variables and mapping
+            aslanpp_cookie, constants, variables, mapping = self.parse_parameters(cookies)
 
-                # ASLan++ constants and variables
-                self.aslanpp_nonpublic_constants.add(key)
-                self.aslanpp_variables.add(value)
-
-                # ASLan++ cookie
-                aslanpp_cookie += key + ".s." + value + ".s."
-
-                # concretization mapping
-                self.mapping.append([key,key])
+            self.aslanpp_nonpublic_constants |= constants 
+            self.aslanpp_variables |= variables
+            self.mapping += mapping
 
             self.return_cookie = "none" if not aslanpp_cookie else aslanpp_cookie[:-3]
         except KeyError:
@@ -282,6 +273,31 @@ class BurpExtender(IBurpExtender, IContextMenuFactory):
 
         with open("concrete.txt","w") as f:
             f.write(json.dumps(self.concretization_file))
+
+
+    def parse_parameters(self,line_parsed):
+        """ Translates line_parsed in ASLan++ and returns the ASLan++ code, constants, variables and mapping. """
+        aslanpp_code = ""
+        constants = set()
+        variables = set()
+        mapping = []
+        for c in line_parsed:
+            key = re.sub("[^a-zA-Z0-9]","", c[0].lower())
+            value = "{}{}".format(self.var_tag,self.var_tag_i)
+            self.var_tag_i += 1
+
+            # ASLan++ constants and variables
+            constants.add(key)
+            variables.add(value)
+
+            # ASLan++ code cookie
+            aslanpp_code += key + ".s." + value + ".s."
+
+            # concretization mapping
+            mapping.append([key,key])
+
+        return aslanpp_code, constants, variables, mapping
+
 
     def is_nonpublic(self,header,body):
         """Checks if a page is accessible even if the requests is made without cookies.
