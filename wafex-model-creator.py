@@ -105,11 +105,17 @@ class BurpExtender(IBurpExtender, IContextMenuFactory):
         self.i_tag = 0
         # start the generation
         for msg in messages:
-            self.parseHttpRequestResponse(msg)
+            # from byte to char Request and Response
+            # for some reason b can be a negative value causing a crash
+            # so I put a check to ensure b is in the right range 
+            http_request = "".join(chr(b) for b in msg.getRequest() if b >= 0 and b <= 256)
+            http_response = "".join(chr(b) for b in msg.getResponse() if b >=0 and b <= 256)
+            protocol = msg.getHttpService().getProtocol()
+            self.parseHttpRequestResponse(http_request, http_response, protocol)
 
 
 
-    def parseHttpRequestResponse(self, msg):
+    def parseHttpRequestResponse(self, http_request, http_response, protocol):
         """ Parses a HTTP Request/Response and generate it's translation in ASLan++. """
         # To keep the concretization file simple, it will contain
         # - URL
@@ -118,17 +124,11 @@ class BurpExtender(IBurpExtender, IContextMenuFactory):
         # - HEADERS
         # - MAPPING from abstract to concrete (which will be 1:1 when this plugin is used)
 
-        # from byte to char Request and Response
-        # for some reason b can be a negative value causing a crash
-        # so I put a check to ensure b is in the right range 
-        http_request = "".join(chr(b) for b in msg.getRequest() if b >= 0 and b <= 256)
-        http_response = "".join(chr(b) for b in msg.getResponse() if b >=0 and b <= 256)
-
         request_parser = HttpParser()
         request_parser.execute(http_request,len(http_request))
 
         # URL for concretization
-        self.url = msg.getHttpService().getProtocol() +"://"+ request_parser.get_headers()['Host'] +"/" + request_parser.get_url()
+        self.url = protocol +"://"+ request_parser.get_headers()['Host'] +"/" + request_parser.get_url()
 
         # path (this string should not begin with something different from a character)
         self.page = re.sub("^[^a-z]*","",urlparse(self.url).path.replace(".","_").replace("/","_"))
