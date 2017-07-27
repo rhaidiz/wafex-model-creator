@@ -18,6 +18,10 @@ entity Environment {
 		nonpublic sanitized(message) : message;
 		nonpublic tuple(message): message;
 		nonpublic no_tuple: text;
+		nonpublic db : message set;
+
+		% database structure
+		@databasestructure
 
 		% Filesystem
 		nonpublic readFile(message): message;
@@ -143,7 +147,7 @@ symbols
 	} %body
   }%dbEntity
 	%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
+	
 	%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 	% FILESYSTEM ENTITY
 	%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
@@ -176,6 +180,8 @@ symbols
 
 
 	body{ %of session
+
+		@databaseinit
 		new Webapplication(webapplication, database, filesystem);  
 		new Database(webapplication, database, filesystem);
 		new Filesystem(webapplication,filesystem);

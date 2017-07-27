@@ -22,6 +22,7 @@ class BurpExtender(IBurpExtender, IContextMenuFactory):
     aslanpp_nonpublic_constants = set()
     aslanpp_variables = set()
     taglist = set()
+    aslanpp_tables_nonpublic_constants = set()
     
     # requests
     page = "none"
@@ -66,9 +67,11 @@ class BurpExtender(IBurpExtender, IContextMenuFactory):
     \t\t\t\t\t\tWebapplication*->*Actor:http_response({},{}).{}.WebNonce;
     \t\t\t\t\t}}
     """
+    populate_database_skeleton = "db->add({});\n"
 
     _webapp_branch = ""
     _client_branch = ""
+    _init_database = ""
 
     def registerExtenderCallbacks(self, callbacks):
         
@@ -107,6 +110,12 @@ class BurpExtender(IBurpExtender, IContextMenuFactory):
         self._webapp_branch = ""
         self._client_branch = ""
         self.i_tag = 0
+        self.aslanpp_constants = set()
+        self.aslanpp_nonpublic_constants = set()
+        self.aslanpp_variables = set()
+        self.taglist = set()
+        self.aslanpp_tables_nonpublic_constants = set()
+
         print("create model")
         # start the generation
         try:
@@ -118,6 +127,52 @@ class BurpExtender(IBurpExtender, IContextMenuFactory):
                 http_response = "".join(chr(b) for b in msg.getResponse() if b >=0 and b <= 256)
                 protocol = msg.getHttpService().getProtocol()
                 self.parseHttpRequestResponse(http_request, http_response, protocol)
+
+            # create the database
+            self.parse_database("/Users/federicodemeo/Downloads/chained.sql")
+
+
+            # create a new model
+            skeleton = open("skeleton.aslan++","r").read()
+            if self.aslanpp_nonpublic_constants:
+                nonpublic_constants = "nonpublic " + ",".join(item for item in self.aslanpp_nonpublic_constants) + " : text;"
+                skeleton = skeleton.replace("@constants2",nonpublic_constants)
+            else:
+                skeleton = skeleton.replace("@constants2","")
+            if self.aslanpp_constants:
+                public_constants = ",".join(item for item in self.aslanpp_constants) + " : text;"
+                skeleton = skeleton.replace("@constants",public_constants)
+            else:
+                skeleton = skeleton.replace("@constants","")
+            if self.aslanpp_variables:
+                variables = ", ".join(item for item in self.aslanpp_variables) + " : message;"
+                skeleton = skeleton.replace("@webappsymbols",variables)
+            else:
+                skeleton = skeleton.replace("@webappsymbols","")
+            if self.taglist:
+                tags = ", ".join(item for item in self.taglist) + " : text;"
+                skeleton = skeleton.replace("@tags",tags)
+            else:
+                skeleton = skeleton.replace("@tags","")
+            skeleton = skeleton.replace("@webappbody",self._webapp_branch)
+            skeleton = skeleton.replace("@honestbody",self._client_branch)
+
+            if self.aslanpp_tables_nonpublic_constants:
+                nonpublic_constants = "nonpublic " + ",".join(item for item in self.aslanpp_tables_nonpublic_constants) + " : text;"
+                skeleton = skeleton.replace("@databasestructure",nonpublic_constants)
+                skeleton = skeleton.replace("@databaseinit",self._init_database)
+            else:
+                skeleton = skeleton.replace("@databasestructure","")
+                skeleton = skeleton.replace("@databaseinit","")
+
+
+            with open("m.aslan++","w") as f:
+                f.write(skeleton)
+            print("model created")
+
+            with open("concrete.txt","w") as f:
+                f.write(json.dumps(self.concretization_file))
+           
         except Exception as e:
             print(e)
 
@@ -239,40 +294,11 @@ class BurpExtender(IBurpExtender, IContextMenuFactory):
         self.concretization_file[tag] = {"method" : self.method, "url" : self.url, "params" : self.params_concrete,"cookie":self.return_cookie}
         
         # save tag in taglist and increment the tag number
-        self.taglist.append("{}{}".format(self.tag,self.i_tag))
+        self.taglist.add("{}{}".format(self.tag,self.i_tag))
         self.i_tag +=1
 
-        # create a new model
-        skeleton = open("skeleton.aslan++","r").read()
-        if self.aslanpp_nonpublic_constants:
-            nonpublic_constants = "nonpublic " + ",".join(item for item in self.aslanpp_nonpublic_constants) + " : text;"
-            skeleton = skeleton.replace("@constants2",nonpublic_constants)
-        else:
-            skeleton = skeleton.replace("@constants2","")
-        if self.aslanpp_constants:
-            public_constants = ",".join(item for item in self.aslanpp_constants) + " : text;"
-            skeleton = skeleton.replace("@constants",public_constants)
-        else:
-            skeleton = skeleton.replace("@constants","")
-        if self.aslanpp_variables:
-            variables = ", ".join(item for item in self.aslanpp_variables) + " : message;"
-            skeleton = skeleton.replace("@webappsymbols",variables)
-        else:
-            skeleton = skeleton.replace("@webappsymbols","")
-        if self.taglist:
-            tags = ", ".join(item for item in self.taglist) + " : text;"
-            skeleton = skeleton.replace("@tags",tags)
-        else:
-            skeleton = skeleton.replace("@tags","")
-        skeleton = skeleton.replace("@webappbody",self._webapp_branch)
-        skeleton = skeleton.replace("@honestbody",self._client_branch)
 
-        with open("m.aslan++","w") as f:
-            f.write(skeleton)
-        print("model created")
 
-        with open("concrete.txt","w") as f:
-            f.write(json.dumps(self.concretization_file))
 
 
     def parse_parameters(self,line_parsed):
@@ -297,6 +323,17 @@ class BurpExtender(IBurpExtender, IContextMenuFactory):
             mapping.append([key,key])
 
         return aslanpp_code, constants, variables, mapping
+
+    def parse_database(self, sql_file):
+
+        with open(sql_file) as f:
+            line = f.read()
+            tables_name = re.findall("CREATE TABLE[a-zA-Z ]*`(.*)`", line)
+            for t in tables_name:
+                self.aslanpp_tables_nonpublic_constants.add(t)
+                self._init_database += self.populate_database_skeleton.format(t)
+
+
 
 
     def is_nonpublic(self,header,body):
