@@ -10,18 +10,35 @@ from os.path import basename
 from burp import IBurpExtender
 from burp import IContextMenuFactory
 from burp import ITab
+from burp import ITextEditor
+from burp import IMessageEditor
 
 from javax.swing import JPanel
+from javax.swing import JTabbedPane
+from javax.swing import JScrollPane
+from javax.swing import GroupLayout
+from javax.swing import JTextArea
+from javax.swing import JScrollPane
 from javax.swing import JButton
+from javax.swing import JTextArea
+from javax.swing import JTextField
 from javax.swing import JMenuItem
 from javax.swing import JFileChooser
-from javax.swing import JTextArea
+from javax.swing import JSplitPane
+from javax.swing import JTable
+from javax.swing.table import DefaultTableModel
 from javax.swing.filechooser import FileNameExtensionFilter
+from javax.swing import BorderFactory
+from java.awt import BorderLayout
+from java.awt import GridBagLayout
+from java.awt.event import ComponentListener
+from java.awt import Dimension
+
 
 from http_parser.pyparser import HttpParser
 from urlparse import urlparse
 
-class BurpExtender(IBurpExtender, IContextMenuFactory, ITab):
+class BurpExtender(IBurpExtender, IContextMenuFactory, ITab, ComponentListener):
 
     taglist = []
     tag = "tag"
@@ -46,48 +63,141 @@ class BurpExtender(IBurpExtender, IContextMenuFactory, ITab):
     populate_database_skeleton = "db->add({});\n"
 
     def registerExtenderCallbacks(self, callbacks):
-        
-        # your extension code here
+
         self._panel = JPanel()
-        button = JPanel()
-        run = JButton("Test", actionPerformed=self.test)
-        button.add(run)
-        self.area = JTextArea()
+        #self._panel.setLayout(BorderLayout())
+        self._panel.setLayout(BorderLayout())
+        #self._panel.setLayout(GridBagLayout())
+        self._panel.setSize(400,400)
 
-        self._panel.add(button)
-        self._panel.add(self.area)
-        self._callbacks = callbacks
-        callbacks.setExtensionName("WAFEx")
-        callbacks.addSuiteTab(self)
-        callbacks.registerContextMenuFactory(self)
-        
-        return
-
-    def test(self, e):
         try:
-            print("1")
-            chooseFile = JFileChooser()
-            print("2")
-            filter_ = FileNameExtensionFilter("txt files", ["txt"])
-            print("3")
-            chooseFile.addChoosableFileFilter(filter_)
-            print("4")
+            # creating all the UI elements
+            self._split_pane = JSplitPane(JSplitPane.HORIZONTAL_SPLIT)
+            self._split_pane_ = JSplitPane(JSplitPane.VERTICAL_SPLIT)
+            self._split_pane_.setDividerLocation(0.5)
+            self._split_pane.setDividerLocation(0.5)
 
-            ret = chooseFile.showDialog(self._panel, "Choose file")
-            print("5")
+            self._panel_top = JPanel()
+            self._panel_top.setLayout(BorderLayout())
+            self._panel_bottom = JPanel()
+            self._panel_bottom.setLayout(BorderLayout())
+            self._panel_right = JPanel()
+            self._panel_right.setLayout(BorderLayout())
+            self._panel_request = JPanel()
+            self._panel_request.setLayout(BorderLayout())
+            self._panel_response = JPanel()
+            self._panel_response.setLayout(BorderLayout())
 
-            if ret == JFileChooser.APPROVE_OPTION:
-                file = chooseFile.getSelectedFile()
+
+            self._tab_pane = JTabbedPane(JTabbedPane.TOP)
+
+            self._button_generate = JButton('Generate!', actionPerformed=self._generate_model)
+            self._button_select_sql = JButton('Select SQL', actionPerformed=self._select_sql_file)
+            self._text_sql_file = JTextField(20)
+
+            self._bottom_commands = JPanel()
+            layout = GroupLayout(self._bottom_commands)
+            layout.setAutoCreateGaps(True)
+            layout.setAutoCreateContainerGaps(True)
+            seq_layout = layout.createSequentialGroup()
+            seq_layout.addComponent(self._text_sql_file)
+            seq_layout.addComponent(self._button_select_sql)
+            seq_layout.addComponent(self._button_generate)
+            layout.setHorizontalGroup(seq_layout)
+
+            self._model_editor = JTextArea()
+            self._message_editor_request = callbacks.createMessageEditor(None,False)
+            self._message_editor_response = callbacks.createMessageEditor(None,False)
+
+            self._table_data = [
+                    ['http://127.0.0.1/', 'GET' ,'/wiki.php']
+               ]
+            self._columns_names = ('Host','Method','URL')
+            dataModel = self.NonEditableModel(self._table_data, self._columns_names)
+            self._table = JTable(dataModel)
+            self._scrollPane = JScrollPane()
+            #scrollPane.setPreferredSize(Dimension(600,300))
+            self._scrollPane.getViewport().setView((self._table))
+
+            # add all the elements
+            self._panel_request.add(self._message_editor_request.getComponent())
+            self._panel_response.add(self._message_editor_response.getComponent())
+
+            self._tab_pane.addTab("Request", self._panel_request)
+            self._tab_pane.addTab("Response", self._panel_response)
+
+            self._panel_top.add(self._scrollPane, BorderLayout.CENTER)
+
+            self._panel_bottom.add(self._tab_pane, BorderLayout.CENTER)
+            self._panel_bottom.add(self._bottom_commands, BorderLayout.PAGE_END)
+            #self._panel_bottom.add(self._button_select_sql, BorderLayout.PAGE_END)
+            #self._panel_bottom.add(self._button_generate, BorderLayout.PAGE_END)
+            scroll = JScrollPane(self._panel_bottom)
+
+            self._panel_right.add(self._model_editor, BorderLayout.CENTER)
+
+            self._split_pane_.setTopComponent(self._panel_top)
+            self._split_pane_.setBottomComponent(scroll)
+            #self._split_pane_.setBottomComponent(self._panel_bottom)
+            self._split_pane.setLeftComponent(self._split_pane_)
+            self._split_pane.setRightComponent(self._panel_right)
+
+            self._panel.addComponentListener(self)
+            self._panel.add(self._split_pane)
+
+            self._callbacks = callbacks
+            callbacks.setExtensionName("WAFEx")
+            callbacks.addSuiteTab(self)
+            callbacks.registerContextMenuFactory(self)
         except Exception as e:
             print(e)
 
-        print("test")
+        return
+
+
+    def _select_sql_file(self, e):
+        """ Shows a JFileChooser dialog to select the SQL file to use for creating
+        the model. """
+        try:
+            chooseFile = JFileChooser()
+            filter_ = FileNameExtensionFilter("txt files", ["txt"])
+            chooseFile.addChoosableFileFilter(filter_)
+
+            ret = chooseFile.showDialog(self._panel, "Choose file")
+
+            if ret == JFileChooser.APPROVE_OPTION:
+                self._sql_file = chooseFile.getSelectedFile()
+            else:
+                self._sql_file = None
+            self._text_sql_file.setText(""+self._sql_file.getPath())
+        except Exception as e:
+            print(e)
+
+    def _generate_model(self, e):
+        print("TBA")
 
     def getTabCaption(self):
         return "WAFEx"
 
     def getUiComponent(self):
+        print("getUiComponent")
         return self._panel
+
+    def componentShown(self, e):
+        self._split_pane.setDividerLocation(0.5);
+        self._new_split.setDividerLocation(0.5)
+        print("focus")
+
+    def componentHidden(self, e):
+        print("hidden")
+
+    def componentMoved(self, e):
+        print("moved")
+    
+    def componentResized(self, e):
+        #self._split_pane.setDividerLocation(0.5);
+        #self._new_split.setDividerLocation(0.5)
+        print("resized")
     
     def createMenuItems(self, invocation):
         ret = []
@@ -377,3 +487,7 @@ class BurpExtender(IBurpExtender, IContextMenuFactory, ITab):
         _webapp_branch = ""
         _client_branch = ""
         _init_database = ""
+
+    class NonEditableModel(DefaultTableModel):
+        def isCellEditable(self,row, column):
+            return False
