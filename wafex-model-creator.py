@@ -70,13 +70,16 @@ class BurpExtender(IBurpExtender, IContextMenuFactory, ITab, ComponentListener):
         #self._panel.setLayout(GridBagLayout())
         self._panel.setSize(400,400)
 
+        # sourrounding try\except because Burp is not giving enough info
         try:
             # creating all the UI elements
-            self._split_pane = JSplitPane(JSplitPane.HORIZONTAL_SPLIT)
-            self._split_pane_ = JSplitPane(JSplitPane.VERTICAL_SPLIT)
-            self._split_pane_.setDividerLocation(0.5)
-            self._split_pane.setDividerLocation(0.5)
+            # create the split pane
+            self._split_pane_horizontal = JSplitPane(JSplitPane.HORIZONTAL_SPLIT)
+            self._split_pane_horizontal.setDividerLocation(0.5)
+            self._split_panel_vertical = JSplitPane(JSplitPane.VERTICAL_SPLIT)
+            self._split_panel_vertical.setDividerLocation(0.5)
 
+            # create panels
             self._panel_top = JPanel()
             self._panel_top.setLayout(BorderLayout())
             self._panel_bottom = JPanel()
@@ -88,27 +91,33 @@ class BurpExtender(IBurpExtender, IContextMenuFactory, ITab, ComponentListener):
             self._panel_response = JPanel()
             self._panel_response.setLayout(BorderLayout())
 
+            # create the tabbed pane used to show request\response
+            self._tabbed_pane = JTabbedPane(JTabbedPane.TOP)
 
-            self._tab_pane = JTabbedPane(JTabbedPane.TOP)
-
+            # create the bottom command for selecting the SQL file and 
+            # generating the model
             self._button_generate = JButton('Generate!', actionPerformed=self._generate_model)
             self._button_select_sql = JButton('Select SQL', actionPerformed=self._select_sql_file)
-            self._text_sql_file = JTextField(20)
+            self._text_field_sql_file = JTextField(20)
 
-            self._bottom_commands = JPanel()
-            layout = GroupLayout(self._bottom_commands)
+            self._panel_bottom_commands = JPanel()
+            layout = GroupLayout(self._panel_bottom_commands)
             layout.setAutoCreateGaps(True)
             layout.setAutoCreateContainerGaps(True)
             seq_layout = layout.createSequentialGroup()
-            seq_layout.addComponent(self._text_sql_file)
+            seq_layout.addComponent(self._text_field_sql_file)
             seq_layout.addComponent(self._button_select_sql)
             seq_layout.addComponent(self._button_generate)
             layout.setHorizontalGroup(seq_layout)
 
-            self._model_editor = JTextArea()
+            # create the test area that will be used as ASLan++ editor
+            self._text_area_model_editor = JTextArea()
+            # create the message editors that will be used to show request and response
             self._message_editor_request = callbacks.createMessageEditor(None,False)
             self._message_editor_response = callbacks.createMessageEditor(None,False)
 
+            # create the table that will be used to show the messages selected for
+            # the translation
             self._table_data = [
                     ['http://127.0.0.1/', 'GET' ,'/wiki.php']
                ]
@@ -116,34 +125,30 @@ class BurpExtender(IBurpExtender, IContextMenuFactory, ITab, ComponentListener):
             dataModel = self.NonEditableModel(self._table_data, self._columns_names)
             self._table = JTable(dataModel)
             self._scrollPane = JScrollPane()
-            #scrollPane.setPreferredSize(Dimension(600,300))
             self._scrollPane.getViewport().setView((self._table))
 
             # add all the elements
             self._panel_request.add(self._message_editor_request.getComponent())
             self._panel_response.add(self._message_editor_response.getComponent())
 
-            self._tab_pane.addTab("Request", self._panel_request)
-            self._tab_pane.addTab("Response", self._panel_response)
+            self._tabbed_pane.addTab("Request", self._panel_request)
+            self._tabbed_pane.addTab("Response", self._panel_response)
 
             self._panel_top.add(self._scrollPane, BorderLayout.CENTER)
 
-            self._panel_bottom.add(self._tab_pane, BorderLayout.CENTER)
-            self._panel_bottom.add(self._bottom_commands, BorderLayout.PAGE_END)
-            #self._panel_bottom.add(self._button_select_sql, BorderLayout.PAGE_END)
-            #self._panel_bottom.add(self._button_generate, BorderLayout.PAGE_END)
+            self._panel_bottom.add(self._tabbed_pane, BorderLayout.CENTER)
+            self._panel_bottom.add(self._panel_bottom_commands, BorderLayout.PAGE_END)
             scroll = JScrollPane(self._panel_bottom)
 
-            self._panel_right.add(self._model_editor, BorderLayout.CENTER)
+            self._panel_right.add(self._text_area_model_editor, BorderLayout.CENTER)
 
-            self._split_pane_.setTopComponent(self._panel_top)
-            self._split_pane_.setBottomComponent(scroll)
-            #self._split_pane_.setBottomComponent(self._panel_bottom)
-            self._split_pane.setLeftComponent(self._split_pane_)
-            self._split_pane.setRightComponent(self._panel_right)
+            self._split_panel_vertical.setTopComponent(self._panel_top)
+            self._split_panel_vertical.setBottomComponent(scroll)
+            self._split_pane_horizontal.setLeftComponent(self._split_panel_vertical)
+            self._split_pane_horizontal.setRightComponent(self._panel_right)
 
             self._panel.addComponentListener(self)
-            self._panel.add(self._split_pane)
+            self._panel.add(self._split_pane_horizontal)
 
             self._callbacks = callbacks
             callbacks.setExtensionName("WAFEx")
@@ -169,7 +174,7 @@ class BurpExtender(IBurpExtender, IContextMenuFactory, ITab, ComponentListener):
                 self._sql_file = chooseFile.getSelectedFile()
             else:
                 self._sql_file = None
-            self._text_sql_file.setText(""+self._sql_file.getPath())
+            self._text_field_sql_file.setText(""+self._sql_file.getPath())
         except Exception as e:
             print(e)
 
@@ -180,24 +185,19 @@ class BurpExtender(IBurpExtender, IContextMenuFactory, ITab, ComponentListener):
         return "WAFEx"
 
     def getUiComponent(self):
-        print("getUiComponent")
         return self._panel
 
     def componentShown(self, e):
-        self._split_pane.setDividerLocation(0.5);
-        self._new_split.setDividerLocation(0.5)
-        print("focus")
+        self._split_pane_horizontal.setDividerLocation(0.5);
 
     def componentHidden(self, e):
-        print("hidden")
+        return
 
     def componentMoved(self, e):
-        print("moved")
+        return
     
     def componentResized(self, e):
-        #self._split_pane.setDividerLocation(0.5);
-        #self._new_split.setDividerLocation(0.5)
-        print("resized")
+        self._split_pane_horizontal.setDividerLocation(0.5);
     
     def createMenuItems(self, invocation):
         ret = []
@@ -489,5 +489,6 @@ class BurpExtender(IBurpExtender, IContextMenuFactory, ITab, ComponentListener):
         _init_database = ""
 
     class NonEditableModel(DefaultTableModel):
+        """ Extends DefaultTableModel to overwrite the possibility of editing a cell. """
         def isCellEditable(self,row, column):
             return False
