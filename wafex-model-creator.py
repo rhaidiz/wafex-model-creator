@@ -14,6 +14,8 @@ from burp import ITextEditor
 from burp import IMessageEditor
 
 from javax.swing import JPanel
+from javax.swing import JPopupMenu
+from javax.swing import JMenuItem
 from javax.swing import JTabbedPane
 from javax.swing import JScrollPane
 from javax.swing import GroupLayout
@@ -25,7 +27,12 @@ from javax.swing import JTextField
 from javax.swing import JMenuItem
 from javax.swing import JFileChooser
 from javax.swing import JSplitPane
+from javax.swing import JOptionPane
+from javax.swing import JFrame
 from javax.swing import JTable
+
+#from javafx.embed.swing import JFXPanel
+
 from javax.swing.table import DefaultTableModel
 from javax.swing.filechooser import FileNameExtensionFilter
 from javax.swing import BorderFactory
@@ -33,19 +40,40 @@ from java.awt import BorderLayout
 from java.awt import GridBagLayout
 from java.awt.event import ComponentListener
 from java.awt import Dimension
+from java.awt.event import ActionListener
+from java.awt.event import MouseAdapter
+
+from org.fife.ui.rsyntaxtextarea import RSyntaxTextArea
+from org.fife.ui.rtextarea import RTextArea
+from org.fife.ui.rsyntaxtextarea import TextEditorPane
+from org.fife.ui.rtextarea import RTextScrollPane
+from org.fife.ui.rsyntaxtextarea import SyntaxConstants;
 
 
 from http_parser.pyparser import HttpParser
 from urlparse import urlparse
 
-class BurpExtender(IBurpExtender, IContextMenuFactory, ITab, ComponentListener):
+class BurpExtender(IBurpExtender, IContextMenuFactory, ITab, ComponentListener, ActionListener, MouseAdapter):
 
     taglist = []
     tag = "tag"
     i_tag = 0
 
+    _sql_file = None
+
     var_tag = "Var_"
     var_tag_i = 0
+
+    # contains the messages to translate
+    _messages = []
+
+    # used to keep track when to refresh the table
+    _reload_table = False
+
+    # contains the messages to show in the messages table
+    _table_data = []
+
+    _search_pattern = "Entity\*->\*Actor:http_request\([0-9\.\-_A-Za-z]*,[0-9_\.\-A-Za-z]*,[_0-9\.\-A-Za-z]*\)\.{}"
     
     request_skeleton = """
     \t\t\t\t\t\ton(?Entity*->*Actor:http_request({},{},{}).{}.?WebNonce):{{
@@ -75,9 +103,7 @@ class BurpExtender(IBurpExtender, IContextMenuFactory, ITab, ComponentListener):
             # creating all the UI elements
             # create the split pane
             self._split_pane_horizontal = JSplitPane(JSplitPane.HORIZONTAL_SPLIT)
-            self._split_pane_horizontal.setDividerLocation(0.5)
             self._split_panel_vertical = JSplitPane(JSplitPane.VERTICAL_SPLIT)
-            self._split_panel_vertical.setDividerLocation(0.5)
 
             # create panels
             self._panel_top = JPanel()
@@ -93,9 +119,15 @@ class BurpExtender(IBurpExtender, IContextMenuFactory, ITab, ComponentListener):
 
             # create the tabbed pane used to show request\response
             self._tabbed_pane = JTabbedPane(JTabbedPane.TOP)
+            
+            # create the tabbed pane used to show aslan++\concretization file
+            self._tabbed_pane_editor = JTabbedPane(JTabbedPane.TOP)
 
             # create the bottom command for selecting the SQL file and 
             # generating the model
+            #self._button_generate = JButton('Generate!', actionPerformed=self._generate_model)
+            #inutile = JFXPanel()
+            from javafx.scene.control import Button
             self._button_generate = JButton('Generate!', actionPerformed=self._generate_model)
             self._button_select_sql = JButton('Select SQL', actionPerformed=self._select_sql_file)
             self._text_field_sql_file = JTextField(20)
@@ -110,22 +142,45 @@ class BurpExtender(IBurpExtender, IContextMenuFactory, ITab, ComponentListener):
             seq_layout.addComponent(self._button_generate)
             layout.setHorizontalGroup(seq_layout)
 
-            # create the test area that will be used as ASLan++ editor
-            self._text_area_model_editor = JTextArea()
+            # create the text area that will be used as ASLan++ editor
+            self._text_area_model_editor = RSyntaxTextArea() #JTextArea()
+            self._text_area_model_editor.setTabSize(2)
+            self._scroll_pane_model= RTextScrollPane(self._text_area_model_editor)  # JScrollPane(self._text_area_model_editor)
+            editor = RTextArea(RTextArea.INSERT_MODE) #JTextArea()
+            print(editor.isEditable())
+            editor.setText("ciao")
+            #editor.setFadeCurrentLineHighlight(True);
+            #editor.setMarginLineEnabled(True);
+            #editor.setMarginLinePosition(80);
+            #editor.setRoundedSelectionEdges(True);
+            #editor.setSyntaxEditingStyle(SyntaxConstants.SYNTAX_STYLE_JAVA)
+            #editor.setCodeFoldingEnabled(True)
+
+            # create the text area that will be used for the concretization file editor
+            self._text_area_concretization_editor = JTextArea()
+            self._text_area_concretization_editor.setTabSize(2)
+            self._scroll_pane_concretization = JScrollPane(self._text_area_concretization_editor)
+
+
             # create the message editors that will be used to show request and response
-            self._message_editor_request = callbacks.createMessageEditor(None,False)
-            self._message_editor_response = callbacks.createMessageEditor(None,False)
+            self._message_editor_request = callbacks.createMessageEditor(None,True)
+            self._message_editor_response = callbacks.createMessageEditor(None,True)
 
             # create the table that will be used to show the messages selected for
             # the translation
-            self._table_data = [
-                    ['http://127.0.0.1/', 'GET' ,'/wiki.php']
-               ]
+
             self._columns_names = ('Host','Method','URL')
             dataModel = self.NonEditableModel(self._table_data, self._columns_names)
             self._table = JTable(dataModel)
             self._scrollPane = JScrollPane()
             self._scrollPane.getViewport().setView((self._table))
+
+            popmenu = JPopupMenu()
+            delete_item = JMenuItem("Delete")
+            delete_item.addActionListener(self)
+            popmenu.add(delete_item)
+            self._table.setComponentPopupMenu(popmenu)
+            self._table.addMouseListener(self)
 
             # add all the elements
             self._panel_request.add(self._message_editor_request.getComponent())
@@ -134,13 +189,20 @@ class BurpExtender(IBurpExtender, IContextMenuFactory, ITab, ComponentListener):
             self._tabbed_pane.addTab("Request", self._panel_request)
             self._tabbed_pane.addTab("Response", self._panel_response)
 
+            self._tabbed_pane_editor.addTab("ASLan++",self._scroll_pane_model)
+            self._tabbed_pane_editor.addTab("Concretization",self._scroll_pane_concretization)
+            self._tabbed_pane_editor.addTab("test",editor)
+
             self._panel_top.add(self._scrollPane, BorderLayout.CENTER)
 
             self._panel_bottom.add(self._tabbed_pane, BorderLayout.CENTER)
-            self._panel_bottom.add(self._panel_bottom_commands, BorderLayout.PAGE_END)
+            #self._panel_bottom.add(self._panel_bottom_commands, BorderLayout.PAGE_END)
             scroll = JScrollPane(self._panel_bottom)
 
-            self._panel_right.add(self._text_area_model_editor, BorderLayout.CENTER)
+            #self._panel_right.add(self._tabbed_pane_editor, BorderLayout.CENTER)
+            editor.setEditable(True)
+            self._panel_right.add(editor, BorderLayout.CENTER)
+            self._panel_right.add(self._panel_bottom_commands, BorderLayout.PAGE_END)
 
             self._split_panel_vertical.setTopComponent(self._panel_top)
             self._split_panel_vertical.setBottomComponent(scroll)
@@ -149,6 +211,7 @@ class BurpExtender(IBurpExtender, IContextMenuFactory, ITab, ComponentListener):
 
             self._panel.addComponentListener(self)
             self._panel.add(self._split_pane_horizontal)
+            #self._panel.add(editor)
 
             self._callbacks = callbacks
             callbacks.setExtensionName("WAFEx")
@@ -159,6 +222,57 @@ class BurpExtender(IBurpExtender, IContextMenuFactory, ITab, ComponentListener):
 
         return
 
+    def mouseClicked(self, e):
+        print("Pressed row: " + str(self._table.getSelectedRow()))
+        try:
+            index = self._table.getSelectedRow()
+            c = self._messages[index]
+            print(len(c))
+            message = c[0]
+            tag = c[1]
+            self._message_editor_request.setMessage(message.getRequest(), True)
+            self._message_editor_response.setMessage(message.getResponse(), False)
+            if tag != None:
+                document = self._text_area_model_editor.getText()
+                start, end = self._search_tag_position(tag, document)
+                self._text_area_model_editor.setCaretPosition(start)
+                self._text_area_model_editor.moveCaretPosition(end)
+                self._text_area_model_editor.requestFocus()
+        except Exception as e:
+            print(e)
+
+    def _search_tag_position(self, tag, text):
+        pattern = self._search_pattern.format(tag)
+        for m in re.finditer(pattern, text):
+            return m.start(), m.end()
+            #print('%02d-%02d: %s' % (m.start(), m.end(), m.group(0)))
+
+    def _search_text_in_text_area(self, text_to_search, text_area):
+        try:
+            pos = 0
+            findLength = len(text_to_search)
+            document = text_area.getDocument()
+            while pos + findLength <= document.getLength():
+                match = document.getText(pos, findLength)
+                if match == text_to_search:
+                    text_area.setCaretPosition(pos)
+                    text_area.moveCaretPosition(pos + findLength)
+                    text_area.requestFocus()
+                    return
+                pos += findLength
+        except Exception as e:
+            print(e)
+
+    
+    def actionPerformed(self, e):
+        try:
+            index = self._table.getSelectedRow()
+            print("pressed deleted for row: " + str(index))
+            del self._table_data[index]
+            del self._messages[index]
+            self._table.getModel().setDataVector(self._table_data, self._columns_names)
+        except Exception as e:
+            print(e)
 
     def _select_sql_file(self, e):
         """ Shows a JFileChooser dialog to select the SQL file to use for creating
@@ -171,15 +285,20 @@ class BurpExtender(IBurpExtender, IContextMenuFactory, ITab, ComponentListener):
             ret = chooseFile.showDialog(self._panel, "Choose file")
 
             if ret == JFileChooser.APPROVE_OPTION:
-                self._sql_file = chooseFile.getSelectedFile()
+                self._sql_file = chooseFile.getSelectedFile().getPath()
             else:
                 self._sql_file = None
-            self._text_field_sql_file.setText(""+self._sql_file.getPath())
+            self._text_field_sql_file.setText(""+self._sql_file)
         except Exception as e:
             print(e)
 
     def _generate_model(self, e):
-        print("TBA")
+        try:
+            model, concrete = self.generateWAFExModel(self._messages)
+            self._text_area_concretization_editor.setText(concrete)
+            self._text_area_model_editor.setText(model)
+        except Exception as e:
+            print(e)
 
     def getTabCaption(self):
         return "WAFEx"
@@ -188,7 +307,28 @@ class BurpExtender(IBurpExtender, IContextMenuFactory, ITab, ComponentListener):
         return self._panel
 
     def componentShown(self, e):
-        self._split_pane_horizontal.setDividerLocation(0.5);
+        self._split_pane_horizontal.setDividerLocation(0.25);
+        # populate the table with the selected requests\response
+        try:
+            if self._reload_table:
+                self._table_data = []       # empty _table_data (not too cool but quick)
+                for c in self._messages:
+                    msg = c[0]
+                    http_request = self.byte_array_to_string(msg.getRequest())
+                    request_parser = HttpParser()
+                    request_parser.execute(http_request,len(http_request))
+
+                    host = msg.getHttpService().getHost()
+                    page = request_parser.get_url()
+                    method = request_parser.get_method()
+
+                    tmp = [host, method, page]
+                    self._table_data += [tmp]
+                self._table.getModel().setDataVector(self._table_data, self._columns_names)
+                self._reload_table = False
+        except Exception as e:
+            print(e)
+
 
     def componentHidden(self, e):
         return
@@ -197,53 +337,64 @@ class BurpExtender(IBurpExtender, IContextMenuFactory, ITab, ComponentListener):
         return
     
     def componentResized(self, e):
-        self._split_pane_horizontal.setDividerLocation(0.5);
+        self._split_pane_horizontal.setDividerLocation(0.25)
     
     def createMenuItems(self, invocation):
         ret = []
         try:
             #if(invocation.getInvocationContext() == invocation.CONTEXT_TARGET_SITE_MAP_TREE or invocation.getInvocationContext() == invocation.CONTEXT_TARGET_SITE_MAP_TABLE):
             if(invocation.getInvocationContext() == invocation.CONTEXT_TARGET_SITE_MAP_TABLE):
-                menu = JMenuItem("Generate WAFEx model")
+                menu = JMenuItem("Send to WAFEx")
                 messages = invocation.getSelectedMessages()
                 def listener(e):
                     """ Generates a new WAFEx model. """
                     #self.generateWAFExModel(messages)
-                    self.area.setText("PIPPO")
+                    self.addToGeneration(messages)
                 menu.addActionListener(listener)
                 ret.append(menu)
         except Exception as e:
             print(e)
         return ret
 
+    def addToGeneration(self, messages):
+        for msg in messages:
+            self._messages += [[msg,None]]
+        self._reload_table = True
+
 
     def generateWAFExModel(self,messages):
-        # reset some variables
-        # self._webapp_branch = ""
-        # self._client_branch = ""
-        # self.i_tag = 0
-        # self.aslanpp_constants = set()
-        # self.aslanpp_nonpublic_constants = set()
-        # self.aslanpp_variables = set()
-        # self.taglist = set()
-        # self.aslanpp_tables_nonpublic_constants = set()
-
-        model = self.AslanppModel()
-
-        print("create model")
         # start the generation
         try:
-            for msg in messages:
+            if len(messages) <= 0:
+                frame = JFrame("Error");
+                JOptionPane.showMessageDialog(frame, "No messages!","Error",JOptionPane.ERROR_MESSAGE)
+                return
+            if self._sql_file == None:
+                frame = JFrame("Error");
+                replay = JOptionPane.showConfirmDialog(frame, "No SQL file selected!\nDo you want to continue?", "Info", JOptionPane.YES_NO_OPTION)
+                if replay == JOptionPane.NO_OPTION:
+                    return
+            self.var_tag_i = 0
+            self.i_tag = 0
+            model = self.AslanppModel()
+
+            print("create model")
+            print("webapp branch {}".format(model._webapp_branch))
+            print("size before creation {}".format(len(messages)))
+            for c in messages:
                 # from byte to char Request and Response
                 # for some reason b can be a negative value causing a crash
                 # so I put a check to ensure b is in the right range 
+                msg = c[0]
                 http_request = "".join(chr(b) for b in msg.getRequest() if b >= 0 and b <= 256)
                 http_response = "".join(chr(b) for b in msg.getResponse() if b >=0 and b <= 256)
                 protocol = msg.getHttpService().getProtocol()
-                self.parseHttpRequestResponse(model, http_request, http_response, protocol)
+                # save the tag number generate by parseHttpRequestResponse in the _messages array
+                c[1] = self.parseHttpRequestResponse(model, http_request, http_response, protocol)
 
             # create the database
-            self.parse_database(model, "/Users/federicodemeo/Downloads/chained.sql")
+            if self._sql_file != None:
+                self.parse_database(model, self._sql_file)
 
 
             # create a new model
@@ -280,6 +431,9 @@ class BurpExtender(IBurpExtender, IContextMenuFactory, ITab, ComponentListener):
                 skeleton = skeleton.replace("@databaseinit","")
 
 
+            concrete = json.dumps(model._concretization_file, indent=1)
+            return skeleton, concrete
+
             with open("m.aslan++","w") as f:
                 f.write(skeleton)
             print("model created")
@@ -290,6 +444,8 @@ class BurpExtender(IBurpExtender, IContextMenuFactory, ITab, ComponentListener):
         except Exception as e:
             print(e)
 
+    def byte_array_to_string(self, byte):
+        return "".join(chr(b) for b in byte if b >= 0 and b <= 256)
 
 
     def parseHttpRequestResponse(self, model, http_request, http_response, protocol):
@@ -413,7 +569,14 @@ class BurpExtender(IBurpExtender, IContextMenuFactory, ITab, ComponentListener):
         
         # save tag in taglist and increment the tag number
         model._taglist.add("{}{}".format(self.tag,self.i_tag))
+
+        # save tag to return
+        tag = self.i_tag
+
+        # increate tag
         self.i_tag +=1
+
+        return "tag{}".format(tag)
 
 
 
@@ -492,3 +655,4 @@ class BurpExtender(IBurpExtender, IContextMenuFactory, ITab, ComponentListener):
         """ Extends DefaultTableModel to overwrite the possibility of editing a cell. """
         def isCellEditable(self,row, column):
             return False
+
