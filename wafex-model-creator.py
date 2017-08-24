@@ -7,64 +7,74 @@ import requests
 
 from os.path import basename
 
-from burp import IBurpExtender
-from burp import IContextMenuFactory
 from burp import ITab
 from burp import ITextEditor
+from burp import IBurpExtender
 from burp import IMessageEditor
+from burp import IContextMenuFactory
 
-from javax.swing import JPanel
-from javax.swing import JPopupMenu
-from javax.swing import JMenuItem
-from javax.swing import JTabbedPane
-from javax.swing import JScrollPane
-from javax.swing import GroupLayout
-from javax.swing import JTextArea
-from javax.swing import JScrollPane
-from javax.swing import JButton
-from javax.swing import JTextArea
-from javax.swing import JTextField
-from javax.swing import JMenuItem
-from javax.swing import JFileChooser
-from javax.swing import JSplitPane
-from javax.swing import JOptionPane
 from javax.swing import JFrame
 from javax.swing import JTable
-
+from javax.swing import JPanel
+from javax.swing import JButton
+from javax.swing import JMenuItem
+from javax.swing import JSplitPane
+from javax.swing import JPopupMenu
+from javax.swing import JTextField
+from javax.swing import JTabbedPane
+from javax.swing import JOptionPane
+from javax.swing import GroupLayout
+from javax.swing import JScrollPane
+from javax.swing import JFileChooser
+from javax.swing import BorderFactory
 from javax.swing.table import DefaultTableModel
 from javax.swing.filechooser import FileNameExtensionFilter
-from javax.swing import BorderFactory
+
+from java.awt import Dimension
 from java.awt import BorderLayout
 from java.awt import GridBagLayout
-from java.awt.event import ComponentListener
-from java.awt import Dimension
-from java.awt.event import ActionListener
 from java.awt.event import MouseAdapter
+from java.awt.event import ActionListener
+from java.awt.event import ComponentListener
 
-from http_parser.pyparser import HttpParser
 from urlparse import urlparse
+from http_parser.pyparser import HttpParser
 
 
-from org.fxmisc.richtext.model import StyleSpansBuilder
-from java.util import Collections
+from javafx.scene import Scene
 from javafx.application import Platform
 from javafx.embed.swing import JFXPanel
 from javafx.scene.layout import BorderPane
 from javafx.scene.layout import AnchorPane
-from javafx.scene import Scene
 
 from java.lang import Runnable
 from javafx.event import EventHandler
 from javafx.scene.input import KeyEvent
 from javafx.scene.input import KeyCode
 
-from java.util.function import Predicate
+from java.util import Collections
 from java.util.function import Consumer
 from java.util.function import Function
+from java.util.function import Predicate
 
-class pred(Predicate):
-    def __init__(self,fn):
-        self.test=fn
+# this should implicitly starts the JavaFX runtime
+# so that I can put the imports here
+JFXPanel()
+
+# prevent the JavaFX runtime to finish after the extention loaded
+# otherwise if I try to reload the extension the JavaFX runtime won't 
+# load again.
+Platform.setImplicitExit(False)
+
+from javafx.scene.control import TextArea
+from javafx.scene.layout import StackPane
+
+from org.fxmisc.richtext import CodeArea
+from org.fxmisc.richtext import CodeArea
+from org.fxmisc.richtext import LineNumberFactory
+from org.fxmisc.flowless import VirtualizedScrollPane
+from org.fxmisc.richtext.model import StyleSpans
+from org.fxmisc.richtext.model import StyleSpansBuilder
 
 class jc(Consumer):
     def __init__(self, fn):
@@ -135,35 +145,28 @@ class BurpExtender(IBurpExtender, IContextMenuFactory, ITab, ComponentListener, 
     _search_pattern = "Entity\*->\*Actor:http_request\([0-9\.\-_A-Za-z]*,[0-9_\.\-A-Za-z]*,[_0-9\.\-A-Za-z]*\)\.{}"
     
     request_skeleton = """
-    \t\t\t\t\t\ton(?Entity*->*Actor:http_request({},{},{}).{}.?WebNonce):{{
-    \t\t\t\t\t\t% todo: request's behavior here
-    \t\t\t\t\t\tActor*->*Entity:http_response({},{}).{}.WebNonce;
-    \t\t\t\t\t}}
+    \t\t\t\ton(?Entity*->*Actor:http_request({},{},{}).{}.?WebNonce):{{
+    \t\t\t\t% todo: request's behavior here
+    \t\t\t\tActor*->*Entity:http_response({},{}).{}.WebNonce;
+    \t\t\t}}
     """
 
     client_skeleton = """
-    \t\t\t\t\t\ton(Actor*->*Webapplication:http_request({},{},{}).{}.?WebNonce):{{
-    \t\t\t\t\t\t% todo: request's behavior here
-    \t\t\t\t\t\tWebapplication*->*Actor:http_response({},{}).{}.WebNonce;
-    \t\t\t\t\t}}
+    \t\t\t\ton(Actor*->*Webapplication:http_request({},{},{}).{}.?WebNonce):{{
+    \t\t\t\t% todo: request's behavior here
+    \t\t\t\tWebapplication*->*Actor:http_response({},{}).{}.WebNonce;
+    \t\t\t}}
     """
     populate_database_skeleton = "db->add({});\n"
 
     def registerExtenderCallbacks(self, callbacks):
 
         self._panel = JPanel()
-        #self._panel.setLayout(BorderLayout())
         self._panel.setLayout(BorderLayout())
-        #self._panel.setLayout(GridBagLayout())
-        self._panel.setSize(400,400)
+        #self._panel.setSize(400,400)
 
         # sourrounding try\except because Burp is not giving enough info
         try:
-            self._jfxpanel = JFXPanel() # this should implicitly starts the JavaFX runtime
-            # prevents the JavaFX runtime to finish after the extention loaded
-            # otherwise if I try to reload the extension the JavaFX runtime won't 
-            # load again.
-            Platform.setImplicitExit(False)
 
             # creating all the UI elements
             # create the split pane
@@ -191,7 +194,8 @@ class BurpExtender(IBurpExtender, IContextMenuFactory, ITab, ComponentListener, 
             # create the bottom command for selecting the SQL file and 
             # generating the model
             self._button_generate = JButton('Generate!', actionPerformed=self._generate_model)
-            self._button_select_sql = JButton('Select SQL') #, actionPerformed=self._select_sql_file)
+            self._button_save = JButton('Save', actionPerformed=self._save_model)
+            self._button_select_sql = JButton('Select SQL', actionPerformed=self._select_sql_file)
             self._text_field_sql_file = JTextField(20)
 
             self._panel_bottom_commands = JPanel()
@@ -202,18 +206,8 @@ class BurpExtender(IBurpExtender, IContextMenuFactory, ITab, ComponentListener, 
             seq_layout.addComponent(self._text_field_sql_file)
             seq_layout.addComponent(self._button_select_sql)
             seq_layout.addComponent(self._button_generate)
+            seq_layout.addComponent(self._button_save)
             layout.setHorizontalGroup(seq_layout)
-
-            # create the text area that will be used as ASLan++ editor
-            self._text_area_model_editor = JTextArea() # MyCodeArea() #RSyntaxTextArea() #JTextArea()
-            #self._text_area_model_editor.setTabSize(2)
-            self._scroll_pane_model= self._text_area_model_editor  # JScrollPane(self._text_area_model_editor)
-
-            # create the text area that will be used for the concretization file editor
-            self._text_area_concretization_editor = JTextArea()
-            self._text_area_concretization_editor.setTabSize(2)
-            self._scroll_pane_concretization = JScrollPane(self._text_area_concretization_editor)
-
 
             # create the message editors that will be used to show request and response
             self._message_editor_request = callbacks.createMessageEditor(None,True)
@@ -223,17 +217,17 @@ class BurpExtender(IBurpExtender, IContextMenuFactory, ITab, ComponentListener, 
             # the translation
 
             self._columns_names = ('Host','Method','URL')
-            dataModel = self.NonEditableModel(self._table_data, self._columns_names) #TODO fix
+            dataModel = NonEditableModel(self._table_data, self._columns_names)
             self._table = JTable(dataModel)
             self._scrollPane = JScrollPane()
             self._scrollPane.getViewport().setView((self._table))
 
             popmenu = JPopupMenu()
             delete_item = JMenuItem("Delete")
-            delete_item.addActionListener(self) #TODO fix
+            delete_item.addActionListener(self)
             popmenu.add(delete_item)
             self._table.setComponentPopupMenu(popmenu)
-            self._table.addMouseListener(self) #TODO fix
+            self._table.addMouseListener(self)
 
             # add all the elements
             self._panel_request.add(self._message_editor_request.getComponent())
@@ -242,18 +236,12 @@ class BurpExtender(IBurpExtender, IContextMenuFactory, ITab, ComponentListener, 
             self._tabbed_pane.addTab("Request", self._panel_request)
             self._tabbed_pane.addTab("Response", self._panel_response)
 
-            #self._tabbed_pane_editor.addTab("ASLan++",self._scroll_pane_model) #TODO fix
-            self._tabbed_pane_editor.addTab("Concretization",self._scroll_pane_concretization)
-            #self._tabbed_pane_editor.addTab("test",editor)
-
             self._panel_top.add(self._scrollPane, BorderLayout.CENTER)
 
             self._panel_bottom.add(self._tabbed_pane, BorderLayout.CENTER)
-            #self._panel_bottom.add(self._panel_bottom_commands, BorderLayout.PAGE_END)
             scroll = JScrollPane(self._panel_bottom)
 
             self._panel_right.add(self._tabbed_pane_editor, BorderLayout.CENTER)
-            #self._panel_right.add(editor, BorderLayout.CENTER)
             self._panel_right.add(self._panel_bottom_commands, BorderLayout.PAGE_END)
 
             self._split_panel_vertical.setTopComponent(self._panel_top)
@@ -263,8 +251,6 @@ class BurpExtender(IBurpExtender, IContextMenuFactory, ITab, ComponentListener, 
 
             self._panel.addComponentListener(self)
             self._panel.add(self._split_pane_horizontal)
-            #self._jfxpanel.add(self._split_pane_horizontal)
-            #self._panel.add(editor)
 
             self._callbacks = callbacks
             callbacks.setExtensionName("WAFEx")
@@ -274,7 +260,7 @@ class BurpExtender(IBurpExtender, IContextMenuFactory, ITab, ComponentListener, 
             print(e)
 
     def mouseClicked(self, e):
-        print("Pressed row: " + str(self._table.getSelectedRow()))
+        """ Positions the Aslan++ editor to the selected request position. """
         try:
             index = self._table.getSelectedRow()
             c = self._messages[index]
@@ -284,63 +270,59 @@ class BurpExtender(IBurpExtender, IContextMenuFactory, ITab, ComponentListener, 
             self._message_editor_request.setMessage(message.getRequest(), True)
             self._message_editor_response.setMessage(message.getResponse(), False)
             if tag != None:
-                print("ciao")
-                document = self._text_area_model_codeArea.getText()
+                document = self._jfxp_aslanpp._editor.getText()
                 start, end = self._search_tag_position(tag, document)
-                # self._text_area_model_editor.setCaretPosition(start)
-                # self._text_area_model_editor.moveCaretPosition(end)
-                # print("start {} end {}".format(start,end))
-                self._text_area_model_codeArea.moveTo(start)
-                self._text_area_model_codeArea.selectRange(start, end)
-                self._text_area_model_codeArea.requestFollowCaret()
-                self._text_area_model_codeArea.requestFocus()
-                #Platform.runLater(self.Select(self._text_area_model_codeArea))
+                self._jfxp_aslanpp._editor.moveTo(start)
+                self._jfxp_aslanpp._editor.selectRange(start, end)
+                self._jfxp_aslanpp._editor.requestFollowCaret()
+                self._jfxp_aslanpp._editor.requestFocus()
         except Exception as e:
             print(e)
 
     
-    class Select(Runnable):
-
-        def __init__(self, editor):
-            self._editor = editor
-
-        def run(self):
-            print("run1")
-            self._editor.moveTo(3)
-            self._editor.requestFollowCaret()
-            self._editor.requestFocus()
-            print("run2")
-
     def _search_tag_position(self, tag, text):
+        """ Searches for a particular tag in a given text and return its position. """
         pattern = self._search_pattern.format(tag)
         for m in re.finditer(pattern, text):
             return m.start(), m.end()
-            #print('%02d-%02d: %s' % (m.start(), m.end(), m.group(0)))
 
-    def _search_text_in_text_area(self, text_to_search, text_area):
+    def actionPerformed(self, e):
+        """ Performs the delete action. """
         try:
-            pos = 0
-            findLength = len(text_to_search)
-            document = text_area.getDocument()
-            while pos + findLength <= document.getLength():
-                match = document.getText(pos, findLength)
-                if match == text_to_search:
-                    text_area.setCaretPosition(pos)
-                    text_area.moveCaretPosition(pos + findLength)
-                    text_area.requestFocus()
-                    return
-                pos += findLength
+            index = self._table.getSelectedRow()
+            del self._table_data[index]
+            del self._messages[index]
+            self._table.getModel().setDataVector(self._table_data, self._columns_names)
+        except Exception as e:
+            print(e)
+    
+    def _save_model(self, e):
+        """ Saves the current Aslan++ model and concretization file. """
+        try:
+            chooseFile = JFileChooser()
+            filter_ = FileNameExtensionFilter("txt files", ["txt"])
+            chooseFile.addChoosableFileFilter(filter_)
+
+            ret = chooseFile.showDialog(self._panel, "Choose file")
+
+            if ret == JFileChooser.APPROVE_OPTION:
+                self._model_name = chooseFile.getSelectedFile().getPath()
+                with open("{}.aslan++".format(self._model_name),"w") as f:
+                    f.write(self._jfxp_aslanpp._editor.getText())
+                print("model created")
+
+                with open("{}.txt".format(self._model_name),"w") as f:
+                    f.write(self._jfxp_concretization._editor.getText())
+
         except Exception as e:
             print(e)
 
     
-    def actionPerformed(self, e):
+    def _generate_model(self, e):
         try:
-            index = self._table.getSelectedRow()
-            print("pressed deleted for row: " + str(index))
-            del self._table_data[index]
-            del self._messages[index]
-            self._table.getModel().setDataVector(self._table_data, self._columns_names)
+            self._model, self._concrete = self._generateWAFExModel(self._messages)
+            #self._text_area_concretization_editor.setText(concrete)
+            Platform.runLater(UpdateEditor(self._jfxp_aslanpp._editor, self._jfxp_concretization._editor, self._model, self._concrete))
         except Exception as e:
             print(e)
 
@@ -362,89 +344,17 @@ class BurpExtender(IBurpExtender, IContextMenuFactory, ITab, ComponentListener, 
         except Exception as e:
             print(e)
 
-    def _generate_model(self, e):
-        try:
-            model, concrete = self.generateWAFExModel(self._messages)
-            self._text_area_concretization_editor.setText(concrete)
-            Platform.runLater(self.ChangeModel(self._text_area_model_codeArea, model))
-        except Exception as e:
-            print(e)
 
     def getTabCaption(self):
         return "WAFEx"
 
     def getUiComponent(self):
         try:
-            Platform.runLater(self.EditorTabUI(self._jfxpanel, self))
+            Platform.runLater(EditorTabUI(self))
             return self._panel
         except Exception as e:
             print(e)
     
-    class ChangeModel(Runnable):
-
-        def __init__(self, editor, model):
-            self._editor = editor
-            self._model = model
-
-        def run(self):
-            self._editor.replaceText(0, 0, self._model)
-    
-    class EditorTabUI(Runnable):
-        
-        def __init__(self, fn, parent):
-            self._fn = fn
-            self._parent = parent
-
-        def run(self):
-            from javafx.scene.control import Button
-            from org.fxmisc.richtext import CodeArea
-            from javafx.scene.control import TextArea
-            from javafx.scene.layout import StackPane
-            from org.fxmisc.richtext import CodeArea
-            from org.fxmisc.richtext import LineNumberFactory
-            from org.fxmisc.richtext.model import StyleSpans
-            from org.fxmisc.richtext.model import StyleSpansBuilder
-
-            class MyCodeArea(CodeArea, EventHandler):
-                """ Extends CodeArea to capture some shortcut such as select-all, copy, paste. """
-            
-                def __init__(self):
-                    self.setOnKeyReleased(self)
-            
-                def handle(self, event):
-                    keyCode = event.getCode()
-                    caret = self.getCaretPosition()
-                    if (event.isControlDown()):
-                        if keyCode == KeyCode.A:
-                            self.selectAll()
-                        if keyCode == KeyCode.C:
-                            self.copy()
-                        if keyCode == KeyCode.V:
-                            self.paste()
-
-            pp = JPanel()
-            jfxp_aslanpp = JFXPanel()
-
-            print("prima di import")
-            from org.fxmisc.flowless import VirtualizedScrollPane
-            print("dopo di import")
-            #codeArea = CodeArea()
-            self._parent._text_area_model_codeArea = MyCodeArea()
-            borderPane = BorderPane()
-
-            self._parent._text_area_model_codeArea.setParagraphGraphicFactory(LineNumberFactory.get(self._parent._text_area_model_codeArea ))
-            self._parent._text_area_model_codeArea.richChanges().filter(pred(lambda ch: not ch.getInserted().equals(ch.getRemoved()))).subscribe(jc(lambda change: self._parent._text_area_model_codeArea.setStyleSpans(0, computeHighlighting(self._parent._text_area_model_codeArea.getText())))) #.subscribe(self.spans)
-            borderPane.setCenter(VirtualizedScrollPane(self._parent._text_area_model_codeArea))
-            scene = Scene(borderPane)
-            scene.getStylesheets().add(ASLANPP_SYNTAX_HIGHLIGHT);
-            jfxp_aslanpp.setScene(scene)
-            self._parent._tabbed_pane_editor.addTab("ASLan++", jfxp_aslanpp)
-
-            #TODO: create a MyCodeArea for the concretization tab too
-            self._parent._tabbed_pane_editor.addTab("Concretization",self._parent._scroll_pane_concretization)
-            #self._panel.add(self._split_pane_horizontal)
-            #self._jfxpanel.add(self._split_pane_horizontal)
-            #self._panel.add(editor)
 
     def componentShown(self, e):
         self._split_pane_horizontal.setDividerLocation(0.25);
@@ -455,7 +365,7 @@ class BurpExtender(IBurpExtender, IContextMenuFactory, ITab, ComponentListener, 
                 self._table_data = []       # empty _table_data (not too cool but quick)
                 for c in self._messages:
                     msg = c[0]
-                    http_request = self.byte_array_to_string(msg.getRequest())
+                    http_request = self._byte_array_to_string(msg.getRequest())
                     request_parser = HttpParser()
                     request_parser.execute(http_request,len(http_request))
 
@@ -489,21 +399,21 @@ class BurpExtender(IBurpExtender, IContextMenuFactory, ITab, ComponentListener, 
                 messages = invocation.getSelectedMessages()
                 def listener(e):
                     """ Generates a new WAFEx model. """
-                    #self.generateWAFExModel(messages)
-                    self.addToGeneration(messages)
+                    #self._generateWAFExModel(messages)
+                    self._addToGeneration(messages)
                 menu.addActionListener(listener)
                 ret.append(menu)
         except Exception as e:
             print(e)
         return ret
 
-    def addToGeneration(self, messages):
+    def _addToGeneration(self, messages):
         for msg in messages:
             self._messages += [[msg,None]]
         self._reload_table = True
 
 
-    def generateWAFExModel(self,messages):
+    def _generateWAFExModel(self,messages):
         # start the generation
         try:
             if len(messages) <= 0:
@@ -517,7 +427,7 @@ class BurpExtender(IBurpExtender, IContextMenuFactory, ITab, ComponentListener, 
                     return
             self.var_tag_i = 0
             self.i_tag = 0
-            model = self.AslanppModel()
+            model = AslanppModel()
 
             print("create model")
             print("webapp branch {}".format(model._webapp_branch))
@@ -530,12 +440,12 @@ class BurpExtender(IBurpExtender, IContextMenuFactory, ITab, ComponentListener, 
                 http_request = "".join(chr(b) for b in msg.getRequest() if b >= 0 and b <= 256)
                 http_response = "".join(chr(b) for b in msg.getResponse() if b >=0 and b <= 256)
                 protocol = msg.getHttpService().getProtocol()
-                # save the tag number generate by parseHttpRequestResponse in the _messages array
-                c[1] = self.parseHttpRequestResponse(model, http_request, http_response, protocol)
+                # save the tag number generate by _parseHttpRequestResponse in the _messages array
+                c[1] = self._parseHttpRequestResponse(model, http_request, http_response, protocol)
 
             # create the database
             if self._sql_file != None:
-                self.parse_database(model, self._sql_file)
+                self._parse_database(model, self._sql_file)
 
 
             # create a new model
@@ -585,11 +495,11 @@ class BurpExtender(IBurpExtender, IContextMenuFactory, ITab, ComponentListener, 
         except Exception as e:
             print(e)
 
-    def byte_array_to_string(self, byte):
+    def _byte_array_to_string(self, byte):
         return "".join(chr(b) for b in byte if b >= 0 and b <= 256)
 
 
-    def parseHttpRequestResponse(self, model, http_request, http_response, protocol):
+    def _parseHttpRequestResponse(self, model, http_request, http_response, protocol):
         """ Parses a HTTP Request/Response and generate it's translation in ASLan++. """
         # To keep the concretization file simple, it will contain
         # - URL
@@ -628,7 +538,7 @@ class BurpExtender(IBurpExtender, IContextMenuFactory, ITab, ComponentListener, 
             params_concrete = [couple.split("=") for couple in query_string.split("&")]
 
             # parse the parameters and retrieve ASLan++ code, constants, variables and mapping
-            aslanpp_params, constants, variables, mapping = self.parse_parameters(params_concrete)
+            aslanpp_params, constants, variables, mapping = self._parse_parameters(params_concrete)
 
             model._aslanpp_nonpublic_constants |= constants 
             model._aslanpp_variables |= variables
@@ -645,7 +555,7 @@ class BurpExtender(IBurpExtender, IContextMenuFactory, ITab, ComponentListener, 
             cookie_concrete = [[item,simple_cookie[item].value] for item in simple_cookie]
             
             # parse the parameters and retrieve ASLan++ code, constants, variables and mapping
-            aslanpp_cookie, constants, variables, mapping = self.parse_parameters(cookie_concrete)
+            aslanpp_cookie, constants, variables, mapping = self._parse_parameters(cookie_concrete)
 
             model._aslanpp_nonpublic_constants |= constants 
             model._aslanpp_variables |= variables
@@ -657,7 +567,7 @@ class BurpExtender(IBurpExtender, IContextMenuFactory, ITab, ComponentListener, 
             pass
 
         # check if the page should be nonpublic
-        page_nonpublic = self.is_nonpublic(request_parser,query_string)
+        page_nonpublic = self._is_nonpublic(request_parser,query_string)
 
         if page_nonpublic:
             model._aslanpp_nonpublic_constants.add(page)
@@ -674,8 +584,8 @@ class BurpExtender(IBurpExtender, IContextMenuFactory, ITab, ComponentListener, 
         # and the client is receiving a different page back in the response
         try:
             return_page = urlparse(response_parser.get_headers()['Location']).path.partition("?")[0].replace("/","_")
-            is_nonpublic = self.is_nonpublic(response_parser,"")
-            if is_nonpublic:
+            _is_nonpublic = self._is_nonpublic(response_parser,"")
+            if _is_nonpublic:
                 model._aslanpp_nonpublic_constants.add(return_page)
             else:
                 model._aslanpp_constants.add(return_page)
@@ -690,7 +600,7 @@ class BurpExtender(IBurpExtender, IContextMenuFactory, ITab, ComponentListener, 
             cookies = [[item,simple_cookie[item].value] for item in simple_cookie]
             
             # parse the parameters and retrieve ASLan++ code, constants, variables and mapping
-            aslanpp_cookie, constants, variables, mapping = self.parse_parameters(cookies)
+            aslanpp_cookie, constants, variables, mapping = self._parse_parameters(cookies)
 
             model._aslanpp_nonpublic_constants |= constants 
             model._aslanpp_variables |= variables
@@ -720,10 +630,7 @@ class BurpExtender(IBurpExtender, IContextMenuFactory, ITab, ComponentListener, 
         return "tag{}".format(tag)
 
 
-
-
-
-    def parse_parameters(self,line_parsed):
+    def _parse_parameters(self,line_parsed):
         """ Translates line_parsed in ASLan++ and returns the ASLan++ code, constants, variables and mapping. """
         aslanpp_code = ""
         constants = set()
@@ -746,7 +653,7 @@ class BurpExtender(IBurpExtender, IContextMenuFactory, ITab, ComponentListener, 
 
         return aslanpp_code, constants, variables, mapping
 
-    def parse_database(self, model, sql_file):
+    def _parse_database(self, model, sql_file):
         """ Parses a SQL file, extracts the tables and populate the model class. """
         with open(sql_file) as f:
             line = f.read()
@@ -756,7 +663,7 @@ class BurpExtender(IBurpExtender, IContextMenuFactory, ITab, ComponentListener, 
                 model._init_database += self.populate_database_skeleton.format(t)
 
 
-    def is_nonpublic(self,header,body):
+    def _is_nonpublic(self,header,body):
         """Checks if a page is accessible even if the requests is made without cookies.
            This is used to understand if a page should be *public* or *nonpublic* in the ASLan++ model. 
         """
@@ -778,22 +685,87 @@ class BurpExtender(IBurpExtender, IContextMenuFactory, ITab, ComponentListener, 
         else:
             return True
 
-    class AslanppModel:
-        """ Represents a new ASLan++ model. Create an object for each model
-        and pass it the parsing method. """
-        _aslanpp_constants = set()
-        _aslanpp_nonpublic_constants = set()
-        _aslanpp_variables = set()
-        _mapping = []
-        _taglist = set()
-        _aslanpp_tables = set()
-        _concretization_file = {}
-        _webapp_branch = ""
-        _client_branch = ""
-        _init_database = ""
+class AslanppModel:
+    """ Represents a new ASLan++ model. Create an object for each model
+    and pass it the parsing method. """
+    _aslanpp_constants = set()
+    _aslanpp_nonpublic_constants = set()
+    _aslanpp_variables = set()
+    _mapping = []
+    _taglist = set()
+    _aslanpp_tables = set()
+    _concretization_file = {}
+    _webapp_branch = ""
+    _client_branch = ""
+    _init_database = ""
 
-    class NonEditableModel(DefaultTableModel):
-        """ Extends DefaultTableModel to overwrite the possibility of editing a cell. """
-        def isCellEditable(self,row, column):
-            return False
+class NonEditableModel(DefaultTableModel):
+    """ Extends DefaultTableModel to overwrite the possibility of editing a cell. """
+    def isCellEditable(self,row, column):
+        return False
 
+class UpdateEditor(Runnable):
+    """ Update editors content. """
+    def __init__(self, aslanpp_editor, concretization_editor, aslanpp_model, concretization):
+        self._aslanpp_editor = aslanpp_editor
+        self._concretization_editor = concretization_editor
+        self._aslanpp_model = aslanpp_model
+        self._concretization = concretization
+
+    def run(self):
+        self._aslanpp_editor.replaceText(0, 0, self._aslanpp_model)
+        self._concretization_editor.replaceText(0, 0, self._concretization)
+    
+class EditorTabUI(Runnable):
+    """ Create the UI for the code editor. """
+    
+    def __init__(self, parent):
+        self._parent = parent
+
+    def run(self):
+        self._parent._jfxp_aslanpp = AslanppEditor()
+        self._parent._tabbed_pane_editor.addTab("ASLan++", self._parent._jfxp_aslanpp)
+
+        self._parent._jfxp_concretization = ConcretizationEditor()
+        self._parent._tabbed_pane_editor.addTab("Concretization",self._parent._jfxp_concretization)
+
+class AslanppEditor(JFXPanel):
+
+    def __init__(self):
+        self._editor = MyCodeArea()
+        borderPane = BorderPane()
+        self._editor.setParagraphGraphicFactory(LineNumberFactory.get(self._editor))
+        self._editor.richChanges().filter(jp(lambda ch: not ch.getInserted().equals(ch.getRemoved()))).subscribe(jc(lambda change: self._editor.setStyleSpans(0, computeHighlighting(self._editor.getText()))))
+        borderPane.setCenter(VirtualizedScrollPane(self._editor))
+        scene = Scene(borderPane)
+        scene.getStylesheets().add(ASLANPP_SYNTAX_HIGHLIGHT);
+        self.setScene(scene)
+
+class ConcretizationEditor(JFXPanel):
+
+    def __init__(self):
+        self._editor = MyCodeArea()
+        borderPane = BorderPane()
+        self._editor.setParagraphGraphicFactory(LineNumberFactory.get(self._editor))
+        borderPane.setCenter(VirtualizedScrollPane(self._editor))
+        scene = Scene(borderPane)
+        scene.getStylesheets().add(ASLANPP_SYNTAX_HIGHLIGHT);
+        self.setScene(scene)
+
+
+class MyCodeArea(CodeArea, EventHandler):
+    """ Extends CodeArea to capture some shortcut such as select-all, copy, paste. """
+
+    def __init__(self):
+        self.setOnKeyReleased(self)
+
+    def handle(self, event):
+        keyCode = event.getCode()
+        caret = self.getCaretPosition()
+        if (event.isControlDown()):
+            if keyCode == KeyCode.A:
+                self.selectAll()
+            if keyCode == KeyCode.C:
+                self.copy()
+            if keyCode == KeyCode.V:
+                self.paste()
