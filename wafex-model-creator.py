@@ -31,8 +31,6 @@ from javax.swing import JOptionPane
 from javax.swing import JFrame
 from javax.swing import JTable
 
-#from javafx.embed.swing import JFXPanel
-
 from javax.swing.table import DefaultTableModel
 from javax.swing.filechooser import FileNameExtensionFilter
 from javax.swing import BorderFactory
@@ -43,15 +41,76 @@ from java.awt import Dimension
 from java.awt.event import ActionListener
 from java.awt.event import MouseAdapter
 
-from org.fife.ui.rsyntaxtextarea import RSyntaxTextArea
-from org.fife.ui.rtextarea import RTextArea
-from org.fife.ui.rsyntaxtextarea import TextEditorPane
-from org.fife.ui.rtextarea import RTextScrollPane
-from org.fife.ui.rsyntaxtextarea import SyntaxConstants;
-
-
 from http_parser.pyparser import HttpParser
 from urlparse import urlparse
+
+
+from org.fxmisc.richtext.model import StyleSpansBuilder
+from java.util import Collections
+from javafx.application import Platform
+from javafx.embed.swing import JFXPanel
+from javafx.scene.layout import BorderPane
+from javafx.scene.layout import AnchorPane
+from javafx.scene import Scene
+
+from java.lang import Runnable
+from javafx.event import EventHandler
+from javafx.scene.input import KeyEvent
+from javafx.scene.input import KeyCode
+
+from java.util.function import Predicate
+from java.util.function import Consumer
+from java.util.function import Function
+
+class pred(Predicate):
+    def __init__(self,fn):
+        self.test=fn
+
+class jc(Consumer):
+    def __init__(self, fn):
+        self.accept=fn
+
+class jf(Function):
+    def __init__(self, fn):
+        self.apply = fn
+
+class jp(Predicate):
+    def __init__(self, fn):
+        self.test = fn
+
+
+# syntax highlight keywords for aslanpp
+KEYWORD_PATTERN="while|specification|channel_model|CCM|ICM|ACM|entity|import|types|symbols|nonpublic|noninvertible|macros|clauses|equations|body|breakpoints|new|any|where|send|receive|over|retract|assert|constraints|goals|forall|exists|Actor|for"
+CONDITIONAL_PATTERN = "select|on|if|else|elseif|then"
+TYPES_PATTERN = "fact|message|text|agent|set"
+PARENT_PATTERN = "\{|\}"
+COMMENT_PATTERN = "%(.*)"
+
+PATTERN = "(?P<keyword>"+KEYWORD_PATTERN+")|(?P<brace>"+PARENT_PATTERN+")|(?P<comment>"+COMMENT_PATTERN+")|(?P<types>"+TYPES_PATTERN+")|(?P<cond>"+CONDITIONAL_PATTERN+")"
+
+# syntax highlight colors file for aslanpp
+ASLANPP_SYNTAX_HIGHLIGHT = "file:///Users/federicodemeo/Documents/Universita/PhD/WAFEx/wafex-model-creator/java-keywords.css"
+
+def computeHighlighting(text):
+    lastKwEnd = 0
+    spansBuilder = StyleSpansBuilder()
+    for m in re.finditer(PATTERN,text):
+        styleClass = "keyword"
+        if m.group("keyword"):
+            styleClass = "keyword"
+        elif m.group("brace"):
+            styleClass = "paren"
+        elif m.group("comment"):
+            styleClass = "comment"
+        elif m.group("types"):
+            styleClass = "types"
+        elif m.group("cond"):
+            styleClass = "conditional"
+        spansBuilder.add(Collections.emptyList(), m.start() - lastKwEnd)
+        spansBuilder.add(Collections.singleton(styleClass), m.end() - m.start())
+        lastKwEnd = m.end()
+    spansBuilder.add(Collections.emptyList(), len(text)- lastKwEnd)
+    return spansBuilder.create()
 
 class BurpExtender(IBurpExtender, IContextMenuFactory, ITab, ComponentListener, ActionListener, MouseAdapter):
 
@@ -100,6 +159,12 @@ class BurpExtender(IBurpExtender, IContextMenuFactory, ITab, ComponentListener, 
 
         # sourrounding try\except because Burp is not giving enough info
         try:
+            self._jfxpanel = JFXPanel() # this should implicitly starts the JavaFX runtime
+            # prevents the JavaFX runtime to finish after the extention loaded
+            # otherwise if I try to reload the extension the JavaFX runtime won't 
+            # load again.
+            Platform.setImplicitExit(False)
+
             # creating all the UI elements
             # create the split pane
             self._split_pane_horizontal = JSplitPane(JSplitPane.HORIZONTAL_SPLIT)
@@ -125,11 +190,8 @@ class BurpExtender(IBurpExtender, IContextMenuFactory, ITab, ComponentListener, 
 
             # create the bottom command for selecting the SQL file and 
             # generating the model
-            #self._button_generate = JButton('Generate!', actionPerformed=self._generate_model)
-            #inutile = JFXPanel()
-            from javafx.scene.control import Button
             self._button_generate = JButton('Generate!', actionPerformed=self._generate_model)
-            self._button_select_sql = JButton('Select SQL', actionPerformed=self._select_sql_file)
+            self._button_select_sql = JButton('Select SQL') #, actionPerformed=self._select_sql_file)
             self._text_field_sql_file = JTextField(20)
 
             self._panel_bottom_commands = JPanel()
@@ -143,18 +205,9 @@ class BurpExtender(IBurpExtender, IContextMenuFactory, ITab, ComponentListener, 
             layout.setHorizontalGroup(seq_layout)
 
             # create the text area that will be used as ASLan++ editor
-            self._text_area_model_editor = RSyntaxTextArea() #JTextArea()
-            self._text_area_model_editor.setTabSize(2)
-            self._scroll_pane_model= RTextScrollPane(self._text_area_model_editor)  # JScrollPane(self._text_area_model_editor)
-            editor = RTextArea(RTextArea.INSERT_MODE) #JTextArea()
-            print(editor.isEditable())
-            editor.setText("ciao")
-            #editor.setFadeCurrentLineHighlight(True);
-            #editor.setMarginLineEnabled(True);
-            #editor.setMarginLinePosition(80);
-            #editor.setRoundedSelectionEdges(True);
-            #editor.setSyntaxEditingStyle(SyntaxConstants.SYNTAX_STYLE_JAVA)
-            #editor.setCodeFoldingEnabled(True)
+            self._text_area_model_editor = JTextArea() # MyCodeArea() #RSyntaxTextArea() #JTextArea()
+            #self._text_area_model_editor.setTabSize(2)
+            self._scroll_pane_model= self._text_area_model_editor  # JScrollPane(self._text_area_model_editor)
 
             # create the text area that will be used for the concretization file editor
             self._text_area_concretization_editor = JTextArea()
@@ -170,17 +223,17 @@ class BurpExtender(IBurpExtender, IContextMenuFactory, ITab, ComponentListener, 
             # the translation
 
             self._columns_names = ('Host','Method','URL')
-            dataModel = self.NonEditableModel(self._table_data, self._columns_names)
+            dataModel = self.NonEditableModel(self._table_data, self._columns_names) #TODO fix
             self._table = JTable(dataModel)
             self._scrollPane = JScrollPane()
             self._scrollPane.getViewport().setView((self._table))
 
             popmenu = JPopupMenu()
             delete_item = JMenuItem("Delete")
-            delete_item.addActionListener(self)
+            delete_item.addActionListener(self) #TODO fix
             popmenu.add(delete_item)
             self._table.setComponentPopupMenu(popmenu)
-            self._table.addMouseListener(self)
+            self._table.addMouseListener(self) #TODO fix
 
             # add all the elements
             self._panel_request.add(self._message_editor_request.getComponent())
@@ -189,9 +242,9 @@ class BurpExtender(IBurpExtender, IContextMenuFactory, ITab, ComponentListener, 
             self._tabbed_pane.addTab("Request", self._panel_request)
             self._tabbed_pane.addTab("Response", self._panel_response)
 
-            self._tabbed_pane_editor.addTab("ASLan++",self._scroll_pane_model)
+            #self._tabbed_pane_editor.addTab("ASLan++",self._scroll_pane_model) #TODO fix
             self._tabbed_pane_editor.addTab("Concretization",self._scroll_pane_concretization)
-            self._tabbed_pane_editor.addTab("test",editor)
+            #self._tabbed_pane_editor.addTab("test",editor)
 
             self._panel_top.add(self._scrollPane, BorderLayout.CENTER)
 
@@ -199,9 +252,8 @@ class BurpExtender(IBurpExtender, IContextMenuFactory, ITab, ComponentListener, 
             #self._panel_bottom.add(self._panel_bottom_commands, BorderLayout.PAGE_END)
             scroll = JScrollPane(self._panel_bottom)
 
-            #self._panel_right.add(self._tabbed_pane_editor, BorderLayout.CENTER)
-            editor.setEditable(True)
-            self._panel_right.add(editor, BorderLayout.CENTER)
+            self._panel_right.add(self._tabbed_pane_editor, BorderLayout.CENTER)
+            #self._panel_right.add(editor, BorderLayout.CENTER)
             self._panel_right.add(self._panel_bottom_commands, BorderLayout.PAGE_END)
 
             self._split_panel_vertical.setTopComponent(self._panel_top)
@@ -211,6 +263,7 @@ class BurpExtender(IBurpExtender, IContextMenuFactory, ITab, ComponentListener, 
 
             self._panel.addComponentListener(self)
             self._panel.add(self._split_pane_horizontal)
+            #self._jfxpanel.add(self._split_pane_horizontal)
             #self._panel.add(editor)
 
             self._callbacks = callbacks
@@ -219,8 +272,6 @@ class BurpExtender(IBurpExtender, IContextMenuFactory, ITab, ComponentListener, 
             callbacks.registerContextMenuFactory(self)
         except Exception as e:
             print(e)
-
-        return
 
     def mouseClicked(self, e):
         print("Pressed row: " + str(self._table.getSelectedRow()))
@@ -233,13 +284,32 @@ class BurpExtender(IBurpExtender, IContextMenuFactory, ITab, ComponentListener, 
             self._message_editor_request.setMessage(message.getRequest(), True)
             self._message_editor_response.setMessage(message.getResponse(), False)
             if tag != None:
-                document = self._text_area_model_editor.getText()
+                print("ciao")
+                document = self._text_area_model_codeArea.getText()
                 start, end = self._search_tag_position(tag, document)
-                self._text_area_model_editor.setCaretPosition(start)
-                self._text_area_model_editor.moveCaretPosition(end)
-                self._text_area_model_editor.requestFocus()
+                # self._text_area_model_editor.setCaretPosition(start)
+                # self._text_area_model_editor.moveCaretPosition(end)
+                # print("start {} end {}".format(start,end))
+                self._text_area_model_codeArea.moveTo(start)
+                self._text_area_model_codeArea.selectRange(start, end)
+                self._text_area_model_codeArea.requestFollowCaret()
+                self._text_area_model_codeArea.requestFocus()
+                #Platform.runLater(self.Select(self._text_area_model_codeArea))
         except Exception as e:
             print(e)
+
+    
+    class Select(Runnable):
+
+        def __init__(self, editor):
+            self._editor = editor
+
+        def run(self):
+            print("run1")
+            self._editor.moveTo(3)
+            self._editor.requestFollowCaret()
+            self._editor.requestFocus()
+            print("run2")
 
     def _search_tag_position(self, tag, text):
         pattern = self._search_pattern.format(tag)
@@ -296,7 +366,7 @@ class BurpExtender(IBurpExtender, IContextMenuFactory, ITab, ComponentListener, 
         try:
             model, concrete = self.generateWAFExModel(self._messages)
             self._text_area_concretization_editor.setText(concrete)
-            self._text_area_model_editor.setText(model)
+            Platform.runLater(self.ChangeModel(self._text_area_model_codeArea, model))
         except Exception as e:
             print(e)
 
@@ -304,13 +374,84 @@ class BurpExtender(IBurpExtender, IContextMenuFactory, ITab, ComponentListener, 
         return "WAFEx"
 
     def getUiComponent(self):
-        return self._panel
+        try:
+            Platform.runLater(self.EditorTabUI(self._jfxpanel, self))
+            return self._panel
+        except Exception as e:
+            print(e)
+    
+    class ChangeModel(Runnable):
+
+        def __init__(self, editor, model):
+            self._editor = editor
+            self._model = model
+
+        def run(self):
+            self._editor.replaceText(0, 0, self._model)
+    
+    class EditorTabUI(Runnable):
+        
+        def __init__(self, fn, parent):
+            self._fn = fn
+            self._parent = parent
+
+        def run(self):
+            from javafx.scene.control import Button
+            from org.fxmisc.richtext import CodeArea
+            from javafx.scene.control import TextArea
+            from javafx.scene.layout import StackPane
+            from org.fxmisc.richtext import CodeArea
+            from org.fxmisc.richtext import LineNumberFactory
+            from org.fxmisc.richtext.model import StyleSpans
+            from org.fxmisc.richtext.model import StyleSpansBuilder
+
+            class MyCodeArea(CodeArea, EventHandler):
+                """ Extends CodeArea to capture some shortcut such as select-all, copy, paste. """
+            
+                def __init__(self):
+                    self.setOnKeyReleased(self)
+            
+                def handle(self, event):
+                    keyCode = event.getCode()
+                    caret = self.getCaretPosition()
+                    if (event.isControlDown()):
+                        if keyCode == KeyCode.A:
+                            self.selectAll()
+                        if keyCode == KeyCode.C:
+                            self.copy()
+                        if keyCode == KeyCode.V:
+                            self.paste()
+
+            pp = JPanel()
+            jfxp_aslanpp = JFXPanel()
+
+            print("prima di import")
+            from org.fxmisc.flowless import VirtualizedScrollPane
+            print("dopo di import")
+            #codeArea = CodeArea()
+            self._parent._text_area_model_codeArea = MyCodeArea()
+            borderPane = BorderPane()
+
+            self._parent._text_area_model_codeArea.setParagraphGraphicFactory(LineNumberFactory.get(self._parent._text_area_model_codeArea ))
+            self._parent._text_area_model_codeArea.richChanges().filter(pred(lambda ch: not ch.getInserted().equals(ch.getRemoved()))).subscribe(jc(lambda change: self._parent._text_area_model_codeArea.setStyleSpans(0, computeHighlighting(self._parent._text_area_model_codeArea.getText())))) #.subscribe(self.spans)
+            borderPane.setCenter(VirtualizedScrollPane(self._parent._text_area_model_codeArea))
+            scene = Scene(borderPane)
+            scene.getStylesheets().add(ASLANPP_SYNTAX_HIGHLIGHT);
+            jfxp_aslanpp.setScene(scene)
+            self._parent._tabbed_pane_editor.addTab("ASLan++", jfxp_aslanpp)
+
+            #TODO: create a MyCodeArea for the concretization tab too
+            self._parent._tabbed_pane_editor.addTab("Concretization",self._parent._scroll_pane_concretization)
+            #self._panel.add(self._split_pane_horizontal)
+            #self._jfxpanel.add(self._split_pane_horizontal)
+            #self._panel.add(editor)
 
     def componentShown(self, e):
         self._split_pane_horizontal.setDividerLocation(0.25);
         # populate the table with the selected requests\response
         try:
             if self._reload_table:
+                print("reload")
                 self._table_data = []       # empty _table_data (not too cool but quick)
                 for c in self._messages:
                     msg = c[0]
