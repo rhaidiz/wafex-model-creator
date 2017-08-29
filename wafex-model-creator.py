@@ -142,7 +142,7 @@ class BurpExtender(IBurpExtender, IContextMenuFactory, ITab, ComponentListener, 
     # contains the messages to show in the messages table
     _table_data = []
 
-    _search_pattern = "Entity\*->\*Actor:http_request\([0-9\.\-_A-Za-z]*,[0-9_\.\-A-Za-z]*,[_0-9\.\-A-Za-z]*\)\.{}"
+    _search_pattern = "Entity\*->\*Actor:http_request\([0-9\?\.\-_A-Za-z]*,[0-9_\?\.\-A-Za-z]*,[_0-9\?\.\-A-Za-z]*\)\.{}"
     
     request_skeleton = """
     \t\t\t\ton(?Entity*->*Actor:http_request({},{},{}).{}.?WebNonce):{{
@@ -152,8 +152,11 @@ class BurpExtender(IBurpExtender, IContextMenuFactory, ITab, ComponentListener, 
     """
 
     client_skeleton = """
-    \t\t\t\ton(Actor*->*Webapplication:http_request({},{},{}).{}.?WebNonce):{{
-    \t\t\t\t% todo: request's behavior here
+    \t\t\t\ton(true):{{
+    \t\t\t\t% send request
+    \t\t\t\tWebNonce := fresh();
+    \t\t\t\tActor*->*Webapplication:http_request({},{},{}).{}.WebNonce;
+    \t\t\t\t% expected response
     \t\t\t\tWebapplication*->*Actor:http_response({},{}).{}.WebNonce;
     \t\t\t}}
     """
@@ -452,14 +455,14 @@ class BurpExtender(IBurpExtender, IContextMenuFactory, ITab, ComponentListener, 
             skeleton = open("skeleton.aslan++","r").read()
             if model._aslanpp_nonpublic_constants:
                 nonpublic_constants = "nonpublic " + ",".join(item for item in model._aslanpp_nonpublic_constants) + " : text;"
-                skeleton = skeleton.replace("@constants2",nonpublic_constants)
+                skeleton = skeleton.replace("@nonpublicconstants",nonpublic_constants)
             else:
-                skeleton = skeleton.replace("@constants2","")
+                skeleton = skeleton.replace("@nonpublicconstants","")
             if model._aslanpp_constants:
                 public_constants = ",".join(item for item in model._aslanpp_constants) + " : text;"
-                skeleton = skeleton.replace("@constants",public_constants)
+                skeleton = skeleton.replace("@publicconstants",public_constants)
             else:
-                skeleton = skeleton.replace("@constants","")
+                skeleton = skeleton.replace("@publicconstants","")
             if model._aslanpp_variables:
                 variables = ", ".join(item for item in model._aslanpp_variables) + " : message;"
                 skeleton = skeleton.replace("@webappsymbols",variables)
@@ -474,7 +477,7 @@ class BurpExtender(IBurpExtender, IContextMenuFactory, ITab, ComponentListener, 
             skeleton = skeleton.replace("@honestbody",model._client_branch)
 
             if model._aslanpp_tables:
-                nonpublic_constants = "nonpublic " + ",".join(item for item in model._aslanpp_tables) + " : text;"
+                nonpublic_constants = "nonpublic " + ",".join(item for item in model._aslanpp_tables) + " : message set;"
                 skeleton = skeleton.replace("@databasestructure",nonpublic_constants)
                 skeleton = skeleton.replace("@databaseinit",model._init_database)
             else:
@@ -531,21 +534,23 @@ class BurpExtender(IBurpExtender, IContextMenuFactory, ITab, ComponentListener, 
             query_string = request_parser.recv_body()
 
         # parse parameters
-        params = "none"
+        aslanpp_params_static = "none"
+        aslanpp_params_dynamic = "none"
         params_concrete = []
         if query_string:
             # saving the concrete parameters
             params_concrete = [couple.split("=") for couple in query_string.split("&")]
 
             # parse the parameters and retrieve ASLan++ code, constants, variables and mapping
-            aslanpp_params, constants, variables, mapping = self._parse_parameters(params_concrete)
+            params_static, params_dynamic, constants, variables, mapping = self._parse_parameters(params_concrete)
 
-            model._aslanpp_nonpublic_constants |= constants 
+            model._aslanpp_constants |= constants 
             model._aslanpp_variables |= variables
             model._mapping += mapping
 
-            # save ASLan++ parameters
-            params = "none" if not aslanpp_params else aslanpp_params[:-3]
+            # save ASLan++ code
+            aslanpp_params_static = "none" if not params_static else params_static[:-3]
+            aslanpp_params_dynamic = "none" if not params_dynamic else params_dynamic[:-3]
 
         # cookie in the request
         try:
@@ -555,15 +560,17 @@ class BurpExtender(IBurpExtender, IContextMenuFactory, ITab, ComponentListener, 
             cookie_concrete = [[item,simple_cookie[item].value] for item in simple_cookie]
             
             # parse the parameters and retrieve ASLan++ code, constants, variables and mapping
-            aslanpp_cookie, constants, variables, mapping = self._parse_parameters(cookie_concrete)
+            cookie_static, cookie_dynamic, constants, variables, mapping = self._parse_parameters(cookie_concrete)
 
-            model._aslanpp_nonpublic_constants |= constants 
+            model._aslanpp_constants |= constants 
             model._aslanpp_variables |= variables
             model._mapping += mapping
 
-            cookie = "none" if not aslanpp_cookie else aslanpp_cookie[:-3]
+            aslanpp_cookie_static = "none" if not cookie_static else cookie_static[:-3]
+            aslanpp_cookie_dynamic = "none" if not cookie_dynamic else cookie_dynamic[:-3]
         except KeyError:
-            cookie = "none"
+            aslanpp_cookie_static = "none"
+            aslanpp_cookie_dynamic = "none"
             pass
 
         # check if the page should be nonpublic
@@ -600,23 +607,25 @@ class BurpExtender(IBurpExtender, IContextMenuFactory, ITab, ComponentListener, 
             cookies = [[item,simple_cookie[item].value] for item in simple_cookie]
             
             # parse the parameters and retrieve ASLan++ code, constants, variables and mapping
-            aslanpp_cookie, constants, variables, mapping = self._parse_parameters(cookies)
+            cookie2_static, cookie2_dynamic, constants, variables, mapping = self._parse_parameters(cookies)
 
-            model._aslanpp_nonpublic_constants |= constants 
+            model._aslanpp_constants |= constants 
             model._aslanpp_variables |= variables
             model._mapping += mapping
 
-            return_cookie = "none" if not aslanpp_cookie else aslanpp_cookie[:-3]
+            aslanpp_return_cookie_static = "none" if not cookie2_static else cookie2_static[:-3]
+            aslanpp_return_cookie_dynamic = "none" if not cookie2_dynamic else cookie2_dynamic[:-3]
         except KeyError:
-            return_cookie = "none"
+            aslanpp_return_cookie_static = "none"
+            aslanpp_return_cookie_dynamic = "none"
             pass
 
         tag = self.tag + str(self.i_tag)
-        model._webapp_branch += self.request_skeleton.format(page, params,cookie,tag,return_page,return_cookie,tag)
-        model._client_branch += self.client_skeleton.format(page, params,cookie,tag,return_page,return_cookie,tag)
+        model._webapp_branch += self.request_skeleton.format(page, aslanpp_params_dynamic, aslanpp_cookie_dynamic, tag, return_page, aslanpp_return_cookie_static,tag)
+        model._client_branch += self.client_skeleton.format(page, aslanpp_params_static, aslanpp_cookie_static, tag, return_page, aslanpp_return_cookie_dynamic, tag)
 
         # create the concretization JSON
-        model._concretization_file[tag] = {"method" : method, "url" : url, "params" : params_concrete,"cookie":return_cookie}
+        model._concretization_file[tag] = {"method" : method, "url" : url, "params" : params_concrete,"cookie":aslanpp_return_cookie_static}
         
         # save tag in taglist and increment the tag number
         model._taglist.add("{}{}".format(self.tag,self.i_tag))
@@ -632,7 +641,8 @@ class BurpExtender(IBurpExtender, IContextMenuFactory, ITab, ComponentListener, 
 
     def _parse_parameters(self,line_parsed):
         """ Translates line_parsed in ASLan++ and returns the ASLan++ code, constants, variables and mapping. """
-        aslanpp_code = ""
+        aslanpp_code_static = ""
+        aslanpp_code_dynamic = ""
         constants = set()
         variables = set()
         mapping = []
@@ -645,13 +655,16 @@ class BurpExtender(IBurpExtender, IContextMenuFactory, ITab, ComponentListener, 
             constants.add(key)
             variables.add(value)
 
-            # ASLan++ code cookie
-            aslanpp_code += key + ".s." + value + ".s."
+            # ASLan++ code where the variable "value" doesn't have a question mark
+            aslanpp_code_static += "{}.s.{}.s.".format(key, value)
+
+            # ASLan++ code where the variable "value" has a question mark
+            aslanpp_code_dynamic += "{}.s.?{}.s.".format(key, value)
 
             # concretization mapping
             mapping.append([key,key])
 
-        return aslanpp_code, constants, variables, mapping
+        return aslanpp_code_static, aslanpp_code_dynamic, constants, variables, mapping
 
     def _parse_database(self, model, sql_file):
         """ Parses a SQL file, extracts the tables and populate the model class. """

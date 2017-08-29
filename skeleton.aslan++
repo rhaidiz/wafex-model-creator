@@ -1,74 +1,133 @@
-% skeleton
+% This is version 2 of the base aslan++ file
+% where I reduce the number of nonce
 
-specification skeleton
+specification joomla
 channel_model CCM
 
 entity Environment {
-	symbols
-		webapplication, database,filesystem: agent;
+ 
 
-		% Malicious payload
+ types
+		mytype < message;
+
+	symbols
 		sqli: text; 			%sql injection payload
 		path_injection: text; 		%valid file
+		xss: text; 		% XSS payload
 		evil_file: text; 		%valid file
+		honest, webapplication, database,filesystem: agent;
+		nonpublic validQuery: text;
+		nonpublic dashboard: text;
+		nonpublic adminPanel: text;	
+		nonpublic loginPage: text;	
+		nonpublic errorPage: text;
+		nonpublic viewHistory: text;
+		nonpublic secureFile: text;
+		nonpublic hknows : message set;
 
-		% database
-		nonpublic inDB(message): fact;
-		nonpublic query(message): message;
+
+		option: text;
+		view: text;
+		upload, file,u,l,p, bob : text;
+		s : text;
+		nonpublic ack: text;
 		nonpublic sanitized(message) : message;
-		nonpublic tuple(message): message;
-		nonpublic no_tuple: text;
-		nonpublic db : message set;
+		redirect(message) : fact;
 
+		%databses
+		errorsql: text; %any possible SQLi payload that generates an informative error
+
+		%DBMS
+		nonpublic q,w,e : nat; % types of query
+		nonpublic new_query(message set,message): message;
+		nonpublic new_query3(message set,message, nat): message;
+		nonpublic db: message set;
+		nonpublic new_query_read(message) : message;
+		nonpublic new_query_write(message,message) : message;
+
+
+		nonpublic inDB(message): fact;
+		nonpublic inDB2(message): fact;
+		nonpublic error(message): fact;
+		nonpublic sanitizedQuery(message): message;
+		nonpublic query(message): message;
+		nonpublic query2(message): message;
+		nonpublic insert(message set,message): message;
+
+	
 		% database structure
 		@databasestructure
 
-		% Filesystem
+		%Filesystem
+		nonpublic fs: message set;
+		nonpublic file2(text) : message set;
+		nonpublic writeFile2(text, message): message;
+
 		nonpublic readFile(message): message;
 		nonpublic file(message): message;
+		nonpublic newFile(message): message;
 		nonpublic inFS(message): fact;
+		nonpublic inFS_DB(message): fact;
 		nonpublic isInFS(message): fact;
 		nonpublic writeFile(message): message;
-		nonpublic newFile(message): message;
 		nonpublic no_file : text;
 
-		% Sessions
-		nonpublic sessionValues(message) : fact;
+		%info about the result of a SQL query
+		nonpublic tuple(message): message;
+		nonpublic no_tuple: text;
+
+
+		nonceUsed(message) : fact;
+		cookieUsed(message) : fact;
 
 		% request 
+		% page, parameters, cookie
 		http_request(message, message, message): message;	
+
 		% response
+		% page, result
 		http_response(message, message): message;	
-		% separator
-		s, none : text;
 
-		%web application constants
-		page, include: text;
+		% none parameter
+		none : text;
 
-		@constants
-		@constants2
-
+		@publicconstants
+		@nonpublicconstants
+		
 		% messages tagss
 		@tags
 
 	clauses
-		% database (behavior)
-		db_hc_ev(M)  : inDB((sqli.?).M); 
-		db_hc_ev_2(M): inDB(sqli.M); 
+		%DBMS (behavior)
+
+		%evil behavior
+		db_hc_ev(M)  : inDB((sqli.?).M);
+		db_hc_ev_2(M): inDB(sqli.?);
+		db_hc_ev_3(M): inDB(sqli);
+
+		%honest behavior
+		db_hc_ho(M)  : inDB2((validQuery.?).M);
+		db_hc_ho_2(M): inDB2(validQuery.M);
+		db_hc_ho_3(M): inDB2(validQuery);
+
+
+
+		%db_hc_ev_2(M): inDB(M) :- M = (sqli.?).?;
+		%db_hc_ev_3(M): inDB(sanitized(M));
 
 		%FILESYSTEM (behavior)
 		fs_hc_ev(M)  : inFS(path_injection.M);
-		fs_hc_ev_2(M)  : inFS(path_injection.M);
-		fs_hc(M): inFS(M) :- isInFS(M);	
-		
-entity Session(Webapplication, Database, Filesystem: agent) {
+		fs_hc_ev_2(M): inFS(M) :- isInFS(M);
+		%fs_hc_ev_3(F)  : inFS(sanitized(F));
 
-entity Webapplication(Actor, Database, Filesystem: agent) {
-symbols
-		@webappsymbols
+
+entity Session(Honest, Webapplication, Database, Filesystem: agent) {
+
+	entity Webapplication(Honest, Actor, Database, Filesystem: agent) {
+		symbols
 		WebNonce : text;
 		Entity : agent;
-
+		@webappsymbols
 		body{
 			while(true){
 				select{
@@ -78,101 +137,227 @@ symbols
 		}%end body
 	}
 
-	entity Honest(Actor, Webapplication){
 
-	symbols
-		WebNonce : text;
-	body{
-			while(true){
-				select{
-				@honestbody
-				}
-			}
-		}
+	%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+	% HONEST ENTITY
+	%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-	}
+  entity Honest(Actor, Webapplication : agent){
+	
+		symbols
+		  Response, RResponse, Something : message;
+			Page, Params, Cookie, Tag : message;
+			Redirect, Hijack: message;
+			WebNonce : text;
+			nonpublic requestSent(message, message): fact;
+			@webappsymbols
+		
+		body{
+				while(true){
+						select{
+							@honestbody
 
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+								% This represent the intruder that sent a link to
+								% the honest agent used for Reflected XSS but also for CSRF
+								on( i *->* Actor : ?Page.?Params.?Tag ):{
+									%assert o: Page !=  index | Params != u.s.xss.?.s.p.s.none | !hknows->contains(?) | Tag != tag1;
+									%assert o: Page !=  insertPage | Params != comment.s.xss.insertPage | Tag != tag1;
+									%assert h: exists M. hknows->contains(M) & cookieUsed(M);
+									Cookie := ?;
+									WebNonce := fresh();
+									Actor *->* Webapplication : http_request(Page,Params,Cookie).Tag.WebNonce;
+									requestSent(Tag, WebNonce);
+								}
+
+								% general rule for the honest user when he receive something
+								% from the web application after sending a request
+								on(Webapplication *->* Actor : http_response(?Response,?RResponse).?Tag.?WebNonce):{
+									select{ on(requestSent(Tag, WebNonce)):{
+										select{
+											% XSS for browsing redirection
+											on (RResponse = xss.?Redirect):{
+													Params := ?;
+													Cookie := ?;
+													Tag := ?;
+													WebNonce := fresh();
+													% redirecting the user aka CSRF
+													Actor *->* Webapplication : http_request(Redirect,Params,Cookie).Tag.WebNonce;
+													redirect(Redirect);
+													Webapplication *->* Actor : http_response(?Response,?RResponse).Tag.WebNonce;
+													hknows->add(Response);
+													hknows->add(RResponse);
+											}
+											% XSS for stealing the user's knowledge
+											on (RResponse = xss.?Hijack):{
+											%assert t: false;
+															Actor *->* i : hknows;
+													%select{on(hknows->contains(?)):{
+													%		Actor *->* i : hknows;
+													%}}
+											}
+										}
+									}}
+								}
+								
+						} %end select
+				} %end while
+		} % end body
+ } % end entity
+	%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+	% END HONEST ENTITY
+	%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+
+	%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 	% DATABASE ENTITY
 	%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+	%TODO: fix SQLquery is just one message
 	
 	entity Database(Webapplication, Actor, Filesystem: agent){
 		symbols
 			NonceWA,NonceDB,NonceFS: text;
-			SQLquery, File: message;
-			Sql : message;
+			SQLquery: message;
+			File, Content: text;
+			Sql, Val : message;
+			Table,Tbl : message set;
+			Filetmp : message set;
+			Action : nat;
+			
 	
 		body{
-			while(true){
-	
-			select{
-				on(Webapplication *->* Actor: query(sanitized(?SQLquery)).?NonceWA ):{
-					select{on(SQLquery = tuple(?) & SQLquery != tuple(file(?))):{
-						Actor *->* Webapplication: tuple(?).NonceWA;
-					}}
-				}
+				while(true){
+						select{ 
+							% all the dishonest behavior in one place
+							on(Webapplication *->* Actor : new_query(?Table, ?SQLquery).?NonceWA |
+								 Webapplication *->* Actor : new_query_read(?SQLquery).?NonceWA |
+								 Webapplication *->* Actor : new_query_write(?File,?SQLquery) |
+								 Webapplication *->* Actor : insert(?Table,?SQLquery).?NonceWA):{
 
-				on(Webapplication *->* Actor: query(?SQLquery).?NonceWA):{
-						select{
-							on(inDB(SQLquery)):{
-								Actor *->* Webapplication: tuple(SQLquery).NonceWA;
-							}
+							
+								 select{
+								 		on(inDB(SQLquery)):{
+								 			% the intruder gets the entire database
+								 			 Actor *->* Webapplication : db.NonceWA;
+								 			}
 
-							on(inDB(SQLquery)):{
-								NonceDB := fresh();
-								select{on( SQLquery = (?Sql.?File).?):{
-								Actor *->* Filesystem: readFile(File).NonceDB;
+								 		 on(inDB(SQLquery)):{
+								 		 % the intruder can to read a file from the file-system
+								 		 	NonceDB := fresh();
+								 		 	select{on( SQLquery = (?Sql.?File).?):{
+								 		 			Actor *->* Filesystem: readFile(File).NonceDB;
+								 		 			select{on(Filesystem *->* Actor : ?Filetmp.NonceDB):{
+								 		 					Actor *->* Webapplication : Filetmp.NonceWA;
+								 		 			}}
+								 		 	}}
+								 		 }
 
-								select{on(Filesystem *->* Actor : file(File).NonceDB):{
-										Actor *->* Webapplication : tuple(file(File)).NonceWA;
-								}}
-							}}
-							}	
-	
-							on(inDB(SQLquery)):{
-								NonceDB := fresh();
-								select{on( SQLquery = (?Sql.?File).?):{
-													Actor *->* Filesystem: writeFile(File).NonceDB;
-															Actor *->* Webapplication : tuple(newFile(File)).NonceWA;
-									}}
-							}
+								 		 on(inDB(SQLquery)):{
+								 		 % the intruder can write to the file-system
+								 		 	NonceDB := fresh();
+								 		 	select{on( SQLquery = (?Sql.?File.?Content).?):{
+								 		 			Actor *->* Filesystem: writeFile2(File, Content).NonceDB;
+								 		 			Actor *->* Webapplication : file(File).NonceWA;
+								 		 		}}
+								 		 }
+								 		 
+								 		 
+								 		 on(inDB(SQLquery)):{
+								 		 		Table->add(SQLquery);
+								 		 }
+								 		
+								 		}
+									}
+								
+									on(Webapplication *->* Actor : new_query(?Table, ?SQLquery).?NonceWA):{
+										select{
+											on(inDB2(SQLquery) | Table->contains(SQLquery)):{
+												select{on(Table->contains(?Val)):{
+													Actor *->* Webapplication : Val.NonceWA;
+													}
+												}
+											}
+										}
+									}
 
-							on((!inDB(SQLquery) & SQLquery != sanitized(?)) ):{
-								Actor *->* Webapplication: no_tuple.NonceWA;
-							}
-						}
-			}%end on
-			} %select	
-		} %while
+									on(Webapplication *->* Actor : new_query_read(?SQLquery).?NonceWA):{
+											select{on(inDB2(SQLquery)):{
+												% the intruder can read from the filesystem
+												NonceDB := fresh();
+												select{on( SQLquery = (?Sql.?File).?):{
+														Actor *->* Filesystem: readFile(File).NonceDB;
+														select{on(Filesystem *->* Actor : ?Filetmp.NonceDB):{
+																Actor *->* Webapplication : Filetmp.NonceWA;
+														}}
+												}}
+											}}
+									}
+									
+									on(Webapplication *->* Actor : new_query_write(?File, ?SQLquery).?NonceWA):{
+											select{on(inDB2(SQLquery)):{
+												% the intruder can write to the filesystem
+												NonceDB := fresh();
+												select{on( SQLquery = (?Sql.?File.?Content).?):{
+														Actor *->* Filesystem: writeFile2(File, Content).NonceDB;
+														Actor *->* Webapplication : file(File).NonceWA;
+													}}
+											}}
+									}
+
+									on(Webapplication *->* Actor : insert(?Table, ?SQLquery).?NonceWA):{
+											Table->add(SQLquery);
+									}
+						} %behavior select
+		} %while 
 	} %body
   }%dbEntity
 	%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-	
+
 	%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 	% FILESYSTEM ENTITY
 	%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 	entity Filesystem(Webapplication, Actor: agent){
+
 			symbols
 				Nonce1, Nonce2: text;
-				Path : message;
+				Path : text;
 				Entity : agent;
+				Content : message;
+				Val : text;
+
 			body{
 				while(true){
 					select{
+						% begin honest behavior
 						on(?Entity *->* Actor : readFile(?Path).?Nonce1):{
 							select{
-								on( inFS(Path)):{
-										Actor *->* Entity : file(Path).Nonce1;
+								on(fs->contains(file2(Path))):{
+									Actor *->* Entity : file2(Path);
 								}
-								on(!inFS(Path)):{
-										Actor *->* Entity : no_file.Nonce1;
+							}
+						}
+						on(?Entity *->* Actor : writeFile2(?Path, ?Content).?Nonce1):{
+							file2(Path)->add(Content);
+							select{
+								on(!fs->contains(file2(Path))):{
+								fs->add(file2(Path));
 								}
-							}%select(on)
-						} %on webapp -> fs
-						on(?Entity *->* Actor : writeFile(?Path).?Nonce1):{
-								isInFS(Path);
-						} %writeFile
-					}%select
+							}
+						}
+						% end honest behavior
+
+						% begin dishonest behavior
+						on(?Entity *->* Actor : readFile(?Path).?Nonce1):{
+							select{
+								on(inFS(Path)):{
+									select{on(fs->contains(file2(?Val))):{
+										Actor *->* Entity : Val;
+									}}
+								}
+							}
+						}
+						% end dishonest behavior
+					} % select
 				}%while
 			}%body
 	}%fs_entity
@@ -182,20 +367,19 @@ symbols
 	body{ %of session
 
 		@databaseinit
-		new Webapplication(webapplication, database, filesystem);  
+		new Webapplication(honest, webapplication, database, filesystem);  
 		new Database(webapplication, database, filesystem);
 		new Filesystem(webapplication,filesystem);
+		new Honest(honest,webapplication);
 	}
 
-	goals %of session
-		goal1:
-		[](iknows(tuple(?)));
-		% goal here
+	goals %of session 
+		security_goal:
+			[](!iknows(db));
 }
 
 body{ %of Environment
-	new Session(webapplication, database, filesystem);
+	new Session(honest,webapplication, database, filesystem);
 }
 
 }
-
