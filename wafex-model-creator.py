@@ -518,7 +518,8 @@ class BurpExtender(IBurpExtender, IContextMenuFactory, ITab, ComponentListener, 
         url = protocol +"://"+ request_parser.get_headers()['Host'] +"/" + request_parser.get_url()
 
         # path (this string should not begin with something different from a character)
-        page = re.sub("^[^a-z]*","",urlparse(url).path.replace(".","_").replace("/","_"))
+        # prepend the letter p since in ASLan++ constants should start with a char
+        page = "p{}".format(re.sub("^[^a-z]*","",urlparse(url).path.replace(".","_").replace("/","_")))
 
         # method for concretization
         method = request_parser.get_method()
@@ -585,7 +586,9 @@ class BurpExtender(IBurpExtender, IContextMenuFactory, ITab, ComponentListener, 
         # the header. If Location is set, it means is a 302 Redirect
         # and the client is receiving a different page back in the response
         try:
-            return_page = urlparse(response_parser.get_headers()['Location']).path.partition("?")[0].replace("/","_")
+            location = response_parser.get_headers()['Location']
+            # prepend the letter p since in ASLan++ constants should start with a char
+            return_page = "p{}".format(urlparse(location).path.partition("?")[0].replace(".","_").replace("/","_"))
             model._aslanpp_constants.add(return_page)
         except KeyError:
             return_page = page
