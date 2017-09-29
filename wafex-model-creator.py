@@ -311,7 +311,9 @@ class BurpExtender(IBurpExtender, IContextMenuFactory, ITab, ComponentListener, 
             if ret == JFileChooser.APPROVE_OPTION:
                 self._model_name = chooseFile.getSelectedFile().getPath()
                 with open("{}.aslan++".format(self._model_name),"w") as f:
-                    f.write(self._jfxp_aslanpp._editor.getText())
+                    skeleton = self._jfxp_aslanpp._editor.getText()
+                    skeleton = skeleton.replace("@filename",basename(self._model_name))
+                    f.write(skeleton)
                 print("model created")
 
                 with open("{}.txt".format(self._model_name),"w") as f:
@@ -487,14 +489,6 @@ class BurpExtender(IBurpExtender, IContextMenuFactory, ITab, ComponentListener, 
 
             concrete = json.dumps(model._concretization_file, indent=1)
             return skeleton, concrete
-
-            with open("m.aslan++","w") as f:
-                f.write(skeleton)
-            print("model created")
-
-            with open("concrete.txt","w") as f:
-                f.write(json.dumps(model._concretization_file))
-           
         except Exception as e:
             print(e)
 
