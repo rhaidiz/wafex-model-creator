@@ -147,7 +147,7 @@ class BurpExtender(IBurpExtender, IContextMenuFactory, ITab, ComponentListener, 
     request_skeleton = """
     \t\t\t\ton(?Entity*->*Actor:http_request({},{},{}).{}.?WebNonce):{{
     \t\t\t\t% todo: request's behavior here
-    \t\t\t\tActor*->*Entity:http_response({},{}).{}.WebNonce;
+    \t\t\t\tActor*->*Entity:http_response({},{},{}).{}.WebNonce;
     \t\t\t}}
     """
 
@@ -157,7 +157,7 @@ class BurpExtender(IBurpExtender, IContextMenuFactory, ITab, ComponentListener, 
     \t\t\t\tWebNonce := fresh();
     \t\t\t\tActor*->*Webapplication:http_request({},{},{}).{}.WebNonce;
     \t\t\t\t% expected response
-    \t\t\t\tWebapplication*->*Actor:http_response({},{}).{}.WebNonce;
+    \t\t\t\tWebapplication*->*Actor:http_response({},{},{}).{}.WebNonce;
     \t\t\t}}
     """
     populate_database_skeleton = "db->add({});\n"
@@ -574,12 +574,7 @@ class BurpExtender(IBurpExtender, IContextMenuFactory, ITab, ComponentListener, 
             pass
 
         # check if the page should be nonpublic
-        page_nonpublic = self._is_nonpublic(request_parser,query_string)
-
-        if page_nonpublic:
-            model._aslanpp_nonpublic_constants.add(page)
-        else:
-             model._aslanpp_constants.add(page)
+        model._aslanpp_constants.add(page)
 
         # check the response
         response_parser = HttpParser()
@@ -591,11 +586,7 @@ class BurpExtender(IBurpExtender, IContextMenuFactory, ITab, ComponentListener, 
         # and the client is receiving a different page back in the response
         try:
             return_page = urlparse(response_parser.get_headers()['Location']).path.partition("?")[0].replace("/","_")
-            _is_nonpublic = self._is_nonpublic(response_parser,"")
-            if _is_nonpublic:
-                model._aslanpp_nonpublic_constants.add(return_page)
-            else:
-                model._aslanpp_constants.add(return_page)
+            model._aslanpp_constants.add(return_page)
         except KeyError:
             return_page = page
 
@@ -621,8 +612,8 @@ class BurpExtender(IBurpExtender, IContextMenuFactory, ITab, ComponentListener, 
             pass
 
         tag = self.tag + str(self.i_tag)
-        model._webapp_branch += self.request_skeleton.format(page, aslanpp_params_dynamic, aslanpp_cookie_dynamic, tag, return_page, aslanpp_return_cookie_static,tag)
-        model._client_branch += self.client_skeleton.format(page, aslanpp_params_static, aslanpp_cookie_static, tag, return_page, aslanpp_return_cookie_dynamic, tag)
+        model._webapp_branch += self.request_skeleton.format(page, aslanpp_params_dynamic, aslanpp_cookie_dynamic, tag, return_page, "none", aslanpp_return_cookie_static,tag)
+        model._client_branch += self.client_skeleton.format(page, aslanpp_params_static, aslanpp_cookie_static, tag, return_page, "none", aslanpp_return_cookie_dynamic, tag)
 
         # create the concretization JSON
         model._concretization_file[tag] = {"method" : method, "url" : url, "params" : params_concrete,"cookie":aslanpp_return_cookie_static}
@@ -685,6 +676,7 @@ class BurpExtender(IBurpExtender, IContextMenuFactory, ITab, ComponentListener, 
         # https://urllib3.readthedocs.io/en/latest/advanced-usage.html#ssl-warnings
 
         url = "http://" + header.get_headers()['Host'] + header.get_url()
+        print("Trying {}".format(url))
         # I don't want the cookie to be part of the header
         h = {k:v for (k,v) in header.get_headers().iteritems() if k != "Cookie"}
         payload = body
@@ -693,6 +685,7 @@ class BurpExtender(IBurpExtender, IContextMenuFactory, ITab, ComponentListener, 
             r = requests.get(url, verify=False, headers=h, allow_redirects=False)
         elif header.get_method() == "POST":
             r = requests.post(url,data=payload, verify=False, headers=h, allow_redirects=False)
+        print("status {}".format(r.status_code))
         if r.status_code == 200:
             return False
         else:
@@ -726,8 +719,8 @@ class UpdateEditor(Runnable):
         self._concretization = concretization
 
     def run(self):
-        self._aslanpp_editor.replaceText(0, 0, self._aslanpp_model)
-        self._concretization_editor.replaceText(0, 0, self._concretization)
+        self._aslanpp_editor.replaceText(0, self._aslanpp_editor.getLength(), self._aslanpp_model)
+        self._concretization_editor.replaceText(0, self._concretization_editor.getLength(), self._concretization)
     
 class EditorTabUI(Runnable):
     """ Create the UI for the code editor. """
