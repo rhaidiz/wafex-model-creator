@@ -43,7 +43,7 @@ entity Environment {
 
 		%Filesystem
 		nonpublic fs: message set;
-		nonpublic file(message) : message set;
+		nonpublic file(message) : message;
 		nonpublic writeFile(message): message;
 		nonpublic readFile(message): message;
 		nonpublic inFS(message): fact;
@@ -81,9 +81,9 @@ entity Environment {
 		db_hc_ev_read2(M): inDB_read(sqli_read.?);
 		db_hc_ev_read3(M): inDB_read(sqli_read);
 
-		db_hc_ev_bypass(M)  : inDB_read((sqli_bypass.?).M);
-		db_hc_ev_bypass2(M): inDB_read(sqli_bypass.?);
-		db_hc_ev_bypass3(M): inDB_read(sqli_bypass);
+		db_hc_ev_bypass(M)  : inDB_bypass((sqli_bypass.?).M);
+		db_hc_ev_bypass2(M): inDB_bypass(sqli_bypass.?);
+		db_hc_ev_bypass3(M): inDB_bypass(sqli_bypass);
 
 		%FILESYSTEM (behavior)
 		fs_hc_ev(M)  : inFS(path_injection.M);
@@ -205,7 +205,7 @@ entity Session(Honest, Webapplication, Database, Filesystem: agent) {
 								 		 on(inDB_read(SQLquery)):{
 								 		 % the intruder can to read a file from the file-system
 								 		 	NonceDB := fresh();
-								 		 	select{on( SQLquery = (?Sql.?File).?):{
+								 		 	select{on( SQLquery = ?Sql.?File.? ):{
 								 		 		Actor *->* Filesystem: readFile(File).NonceDB;
 								 		 		select{on(Filesystem *->* Actor : ?Filetmp.NonceDB):{
 								 		 				Actor *->* Webapplication : Filetmp.NonceWA;
@@ -228,7 +228,10 @@ entity Session(Honest, Webapplication, Database, Filesystem: agent) {
 								 		 }
 
 										 on(inDB_bypass(SQLquery)):{
-											Actor*->*Webapplication : SQLquery.NonceWA;
+										 select{ on(Table->contains(?Sql)):{
+											Actor*->*Webapplication : Sql.NonceWA;
+										 		}
+										 }
 										 }
 								 		
 								 		}

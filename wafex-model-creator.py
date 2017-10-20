@@ -1,5 +1,6 @@
 import io
 import re
+import os
 import sys
 import json
 import Cookie
@@ -260,7 +261,9 @@ class BurpExtender(IBurpExtender, IContextMenuFactory, ITab, ComponentListener, 
             callbacks.addSuiteTab(self)
             callbacks.registerContextMenuFactory(self)
         except Exception as e:
-            print(e)
+            exc_type, exc_obj, exc_tb = sys.exc_info()
+            fname = os.path.split(exc_tb.tb_frame.f_code.co_filename)[1]
+            print(exc_type, fname, exc_tb.tb_lineno)
 
     def mouseClicked(self, e):
         """ Positions the Aslan++ editor to the selected request position. """
@@ -324,12 +327,9 @@ class BurpExtender(IBurpExtender, IContextMenuFactory, ITab, ComponentListener, 
 
     
     def _generate_model(self, e):
-        try:
-            self._model, self._concrete = self._generateWAFExModel(self._messages)
-            #self._text_area_concretization_editor.setText(concrete)
-            Platform.runLater(UpdateEditor(self._jfxp_aslanpp._editor, self._jfxp_concretization._editor, self._model, self._concrete))
-        except Exception as e:
-            print(e)
+        self._model, self._concrete = self._generateWAFExModel(self._messages)
+        #self._text_area_concretization_editor.setText(concrete)
+        Platform.runLater(UpdateEditor(self._jfxp_aslanpp._editor, self._jfxp_concretization._editor, self._model, self._concrete))
 
     def _select_sql_file(self, e):
         """ Shows a JFileChooser dialog to select the SQL file to use for creating
@@ -358,7 +358,9 @@ class BurpExtender(IBurpExtender, IContextMenuFactory, ITab, ComponentListener, 
             Platform.runLater(EditorTabUI(self))
             return self._panel
         except Exception as e:
-            print(e)
+            exc_type, exc_obj, exc_tb = sys.exc_info()
+            fname = os.path.split(exc_tb.tb_frame.f_code.co_filename)[1]
+            print(exc_type, fname, exc_tb.tb_lineno)
     
 
     def componentShown(self, e):
@@ -442,6 +444,9 @@ class BurpExtender(IBurpExtender, IContextMenuFactory, ITab, ComponentListener, 
                 # for some reason b can be a negative value causing a crash
                 # so I put a check to ensure b is in the right range 
                 msg = c[0]
+                if msg.getRequest() == None or msg.getResponse() == None:
+                    # do not convert empty messages
+                    continue
                 http_request = "".join(chr(b) for b in msg.getRequest() if b >= 0 and b <= 256)
                 http_response = "".join(chr(b) for b in msg.getResponse() if b >=0 and b <= 256)
                 protocol = msg.getHttpService().getProtocol()
@@ -490,142 +495,149 @@ class BurpExtender(IBurpExtender, IContextMenuFactory, ITab, ComponentListener, 
             concrete = json.dumps(model._concretization_file, indent=1)
             return skeleton, concrete
         except Exception as e:
-            print(e)
+            exc_type, exc_obj, exc_tb = sys.exc_info()
+            fname = os.path.split(exc_tb.tb_frame.f_code.co_filename)[1]
+            print(exc_type, fname, exc_tb.tb_lineno)
 
     def _byte_array_to_string(self, byte):
         return "".join(chr(b) for b in byte if b >= 0 and b <= 256)
 
 
     def _parseHttpRequestResponse(self, model, http_request, http_response, protocol):
-        """ Parses a HTTP Request/Response and generate it's translation in ASLan++. """
-        # To keep the concretization file simple, it will contain
-        # - URL
-        # - METHOD
-        # - PARAMS
-        # - HEADERS
-        # - MAPPING from abstract to concrete (which will be 1:1 when this plugin is used)
+        try:
+            """ Parses a HTTP Request/Response and generate it's translation in ASLan++. """
+            # To keep the concretization file simple, it will contain
+            # - URL
+            # - METHOD
+            # - PARAMS
+            # - HEADERS
+            # - MAPPING from abstract to concrete (which will be 1:1 when this plugin is used)
 
-        request_parser = HttpParser()
-        request_parser.execute(http_request,len(http_request))
+            request_parser = HttpParser()
+            request_parser.execute(http_request,len(http_request))
 
-        # URL for concretization
-        url = protocol +"://"+ request_parser.get_headers()['Host'] +"/" + request_parser.get_url()
+            # URL for concretization
+            url = protocol +"://"+ request_parser.get_headers()['Host'] +"/" + request_parser.get_url()
 
-        # path (this string should not begin with something different from a character)
-        # prepend the letter p since in ASLan++ constants should start with a char
-        page = "p{}".format(re.sub("^[^a-z]*","",urlparse(url).path.replace(".","_").replace("/","_")))
+            # path (this string should not begin with something different from a character)
+            # and replace every non alphanumeric character with _
+            # the first re.sub is used to replace every non alphanumeric char
+            # the second re.sub is used to remove non character from the begining of the string
+            page = re.sub("^[^a-z]*","",re.sub("[^a-zA-Z0-9]","_",urlparse(url).path))
 
-        # method for concretization
-        method = request_parser.get_method()
-        
-        query_string = ""
-        # GET requests
-        if method == "GET":
-            # GET parameters
+            # method for concretization
+            method = request_parser.get_method()
+            
+            query_string = ""
+            # query string
             query_string = request_parser.get_query_string()
-        # POST requests
-        elif method == "POST":
-            # POST parameters
-            query_string = request_parser.recv_body()
+            if method == "POST" and "Content-type" in request_parser.get_headers() and "multipart/form-data" not in request_parser.get_headers()['Content-Type']:
+                # POST parameters, multipart/form-data not yet supported
+                query_string = "&".join(a for a in [query_string, request_parser.recv_body()] if len(a)>0)
+            if  "Content-type" in request_parser.get_headers() and "multipart/form-data" in request_parser.get_headers()['Content-Type']:
+                print("multipart/form-data not yet supported")
 
-        # parse parameters
-        aslanpp_params_static = "none"
-        aslanpp_params_dynamic = "none"
-        params_concrete = []
-        if query_string:
-            # saving the concrete parameters
-            params_concrete = [couple.split("=") for couple in query_string.split("&")]
+            # parse parameters
+            aslanpp_params_static = "none"
+            aslanpp_params_dynamic = "none"
+            params_concrete = []
+            if query_string:
+                # saving the concrete parameters
+                params_concrete = [couple.split("=") for couple in query_string.split("&")]
 
-            # parse the parameters and retrieve ASLan++ code, constants, variables and mapping
-            params_static, params_dynamic, constants, variables, mapping = self._parse_parameters(params_concrete)
+                # parse the parameters and retrieve ASLan++ code, constants, variables and mapping
+                params_static, params_dynamic, constants, variables, mapping = self._parse_parameters(params_concrete)
 
-            model._aslanpp_constants |= constants 
-            model._aslanpp_variables |= variables
-            model._mapping += mapping
+                model._aslanpp_constants |= constants 
+                model._aslanpp_variables |= variables
+                model._mapping += mapping
 
-            # save ASLan++ code
-            aslanpp_params_static = "none" if not params_static else params_static[:-3]
-            aslanpp_params_dynamic = "none" if not params_dynamic else params_dynamic[:-3]
+                # save ASLan++ code
+                aslanpp_params_static = "none" if not params_static else params_static[:-3]
+                aslanpp_params_dynamic = "none" if not params_dynamic else params_dynamic[:-3]
 
-        # cookie in the request
-        try:
-            cookie_request = request_parser.get_headers()['Cookie']
+            # cookie in the request
+            try:
+                cookie_request = request_parser.get_headers()['Cookie']
 
-            simple_cookie = Cookie.SimpleCookie(cookie_request) 
-            cookie_concrete = [[item,simple_cookie[item].value] for item in simple_cookie]
+                simple_cookie = Cookie.SimpleCookie(cookie_request) 
+                cookie_concrete = [[item,simple_cookie[item].value] for item in simple_cookie]
+                
+                # parse the parameters and retrieve ASLan++ code, constants, variables and mapping
+                cookie_static, cookie_dynamic, constants, variables, mapping = self._parse_parameters(cookie_concrete)
+
+                model._aslanpp_constants |= constants 
+                model._aslanpp_variables |= variables
+                model._mapping += mapping
+
+                aslanpp_cookie_static = "none" if not cookie_static else cookie_static[:-3]
+                aslanpp_cookie_dynamic = "none" if not cookie_dynamic else cookie_dynamic[:-3]
+            except KeyError:
+                aslanpp_cookie_static = "none"
+                aslanpp_cookie_dynamic = "none"
+                pass
+
+            # add page in the array _aslanpp_constants
+            model._aslanpp_constants.add(page)
+
+            # check the response
+            response_parser = HttpParser()
+            response_parser.execute(http_response,len(http_response))
+
+            # Location
+            # get the returned page by checking the Location field in
+            # the header. If Location is set, it means is a 302 Redirect
+            # and the client is receiving a different page back in the response
+            try:
+                location = response_parser.get_headers()['Location']
+                # prepend the letter p since in ASLan++ constants should start with a char
+                return_page = "p{}".format(urlparse(location).path.partition("?")[0].replace(".","_").replace("/","_"))
+                model._aslanpp_constants.add(return_page)
+            except KeyError:
+                return_page = page
+
+            # and let's see if we have a new cookie
+            try:
+                set_cookie_header = response_parser.get_headers()['Set-Cookie']
+                # parse new cookie
+                simple_cookie = Cookie.SimpleCookie(set_cookie_header) 
+                cookies = [[item,simple_cookie[item].value] for item in simple_cookie]
+                
+                # parse the parameters and retrieve ASLan++ code, constants, variables and mapping
+                cookie2_static, cookie2_dynamic, constants, variables, mapping = self._parse_parameters(cookies)
+
+                model._aslanpp_constants |= constants 
+                model._aslanpp_variables |= variables
+                model._mapping += mapping
+
+                aslanpp_return_cookie_static = "none" if not cookie2_static else cookie2_static[:-3]
+                aslanpp_return_cookie_dynamic = "none" if not cookie2_dynamic else cookie2_dynamic[:-3]
+            except KeyError:
+                aslanpp_return_cookie_static = "none"
+                aslanpp_return_cookie_dynamic = "none"
+                pass
+
+            tag = self.tag + str(self.i_tag)
+            model._webapp_branch += self.request_skeleton.format(page, aslanpp_params_dynamic, aslanpp_cookie_dynamic, tag, return_page, "none", aslanpp_return_cookie_static,tag)
+            model._client_branch += self.client_skeleton.format(page, aslanpp_params_static, aslanpp_cookie_static, tag, return_page, "none", aslanpp_return_cookie_dynamic, tag)
+
+            # create the concretization JSON
+            model._concretization_file[tag] = {"method" : method, "url" : url, "params" : params_concrete,"cookie":aslanpp_return_cookie_static}
             
-            # parse the parameters and retrieve ASLan++ code, constants, variables and mapping
-            cookie_static, cookie_dynamic, constants, variables, mapping = self._parse_parameters(cookie_concrete)
+            # save tag in taglist and increment the tag number
+            model._taglist.add("{}{}".format(self.tag,self.i_tag))
 
-            model._aslanpp_constants |= constants 
-            model._aslanpp_variables |= variables
-            model._mapping += mapping
+            # save tag to return
+            tag = self.i_tag
 
-            aslanpp_cookie_static = "none" if not cookie_static else cookie_static[:-3]
-            aslanpp_cookie_dynamic = "none" if not cookie_dynamic else cookie_dynamic[:-3]
-        except KeyError:
-            aslanpp_cookie_static = "none"
-            aslanpp_cookie_dynamic = "none"
-            pass
+            # increate tag
+            self.i_tag +=1
 
-        # check if the page should be nonpublic
-        model._aslanpp_constants.add(page)
-
-        # check the response
-        response_parser = HttpParser()
-        response_parser.execute(http_response,len(http_response))
-
-        # Location
-        # get the returned page by checking the Location field in
-        # the header. If Location is set, it means is a 302 Redirect
-        # and the client is receiving a different page back in the response
-        try:
-            location = response_parser.get_headers()['Location']
-            # prepend the letter p since in ASLan++ constants should start with a char
-            return_page = "p{}".format(urlparse(location).path.partition("?")[0].replace(".","_").replace("/","_"))
-            model._aslanpp_constants.add(return_page)
-        except KeyError:
-            return_page = page
-
-        # and let's see if we have a new cookie
-        try:
-            set_cookie_header = response_parser.get_headers()['Set-Cookie']
-            # parse new cookie
-            simple_cookie = Cookie.SimpleCookie(set_cookie_header) 
-            cookies = [[item,simple_cookie[item].value] for item in simple_cookie]
-            
-            # parse the parameters and retrieve ASLan++ code, constants, variables and mapping
-            cookie2_static, cookie2_dynamic, constants, variables, mapping = self._parse_parameters(cookies)
-
-            model._aslanpp_constants |= constants 
-            model._aslanpp_variables |= variables
-            model._mapping += mapping
-
-            aslanpp_return_cookie_static = "none" if not cookie2_static else cookie2_static[:-3]
-            aslanpp_return_cookie_dynamic = "none" if not cookie2_dynamic else cookie2_dynamic[:-3]
-        except KeyError:
-            aslanpp_return_cookie_static = "none"
-            aslanpp_return_cookie_dynamic = "none"
-            pass
-
-        tag = self.tag + str(self.i_tag)
-        model._webapp_branch += self.request_skeleton.format(page, aslanpp_params_dynamic, aslanpp_cookie_dynamic, tag, return_page, "none", aslanpp_return_cookie_static,tag)
-        model._client_branch += self.client_skeleton.format(page, aslanpp_params_static, aslanpp_cookie_static, tag, return_page, "none", aslanpp_return_cookie_dynamic, tag)
-
-        # create the concretization JSON
-        model._concretization_file[tag] = {"method" : method, "url" : url, "params" : params_concrete,"cookie":aslanpp_return_cookie_static}
-        
-        # save tag in taglist and increment the tag number
-        model._taglist.add("{}{}".format(self.tag,self.i_tag))
-
-        # save tag to return
-        tag = self.i_tag
-
-        # increate tag
-        self.i_tag +=1
-
-        return "tag{}".format(tag)
-
+            return "tag{}".format(tag)
+        except Exception as e:
+            exc_type, exc_obj, exc_tb = sys.exc_info()
+            fname = os.path.split(exc_tb.tb_frame.f_code.co_filename)[1]
+            print(exc_type, fname, exc_tb.tb_lineno)
 
     def _parse_parameters(self,line_parsed):
         """ Translates line_parsed in ASLan++ and returns the ASLan++ code, constants, variables and mapping. """
@@ -634,6 +646,7 @@ class BurpExtender(IBurpExtender, IContextMenuFactory, ITab, ComponentListener, 
         constants = set()
         variables = set()
         mapping = []
+        self.var_tag_i = 0
         for c in line_parsed:
             key = re.sub("[^a-zA-Z0-9]","", c[0].lower())
             value = "{}{}".format(self.var_tag,self.var_tag_i)
@@ -689,7 +702,7 @@ class BurpExtender(IBurpExtender, IContextMenuFactory, ITab, ComponentListener, 
             return True
 
 class AslanppModel:
-    """ Represents a new ASLan++ model. Create an object for each model
+    """ Represents an ASLan++ model. Create an object for each model
     and pass it the parsing method. """
     _aslanpp_constants = set()
     _aslanpp_nonpublic_constants = set()
