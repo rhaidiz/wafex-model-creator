@@ -12,6 +12,7 @@ from http_parser.pyparser import HttpParser
 
 i_tag = 0
 var_tag = "Var_"
+var_i = 0
 
 _search_pattern = "Entity\*->\*Actor:http_request\([0-9\?\.\-_A-Za-z]*,[0-9_\?\.\-A-Za-z]*,[_0-9\?\.\-A-Za-z]*\)\.{}"
 
@@ -28,7 +29,11 @@ client_skeleton = """
 \t\t\t\tWebNonce := fresh();
 \t\t\t\tActor*->*Webapplication:http_request({},{},{}).{}.WebNonce;
 \t\t\t\t% expected response
-\t\t\t\tWebapplication*->*Actor:http_response({},{},{}).{}.WebNonce;
+\t\t\t\tWebapplication*->*Actor:http_response({},?Body,?Cookie).{}.WebNonce;
+\t\t\t\thknows->add(Cookie);
+\t\t\t\tif(client_xss(Body)){{
+\t\t\t\t\tActor -> i : hknows;
+\t\t\t\t}}
 \t\t\t}}
 """
 populate_database_skeleton = "db->add({});\n"
@@ -47,7 +52,7 @@ def _generateWAFExModel(model):
 
         skeleton = open("skeleton.aslan++","r").read()
         if model._page_constants:
-            pages = ",".join(item for item in model._page_constants) + " : page:"
+            pages = ",".join(item for item in model._page_constants) + " : page;"
             skeleton = skeleton.replace("@pages", pages)
         else:
             skeleton = skeleton.replace("@pages", "")
@@ -93,9 +98,12 @@ def _byte_array_to_string(byte):
 def _parseHttpRequestResponse(model, http_request, http_response, protocol):
     try:
         global i_tag
+        global var_i
         """ Parses a HTTP Request/Response and generate it's translation in ASLan++. """
         request_parser = HttpParser()
         request_parser.execute(http_request,len(http_request))
+
+        var_i = 0
 
         # concretization details
         concrete = dict()
@@ -164,8 +172,12 @@ def _parseHttpRequestResponse(model, http_request, http_response, protocol):
 
         if aslanpp_params_no_questionmark == "":
             aslanpp_params_no_questionmark = "none"
+        else:
+            aslanpp_params_no_questionmark = aslanpp_params_no_questionmark[:-5]
         if aslanpp_params_questionmark == "":
             aslanpp_params_questionmark = "none"
+        else:
+            aslanpp_params_questionmark = aslanpp_params_questionmark[:-5]
 
         # convert cookie in the request
         try:
@@ -176,8 +188,10 @@ def _parseHttpRequestResponse(model, http_request, http_response, protocol):
             
             # parse the parameters and retrieve ASLan++ code, constants, variables and mapping
             cookie_no_questionmark, cookie_questionmark, cookie_mapping = _parse_parameters(model, concrete_cookie)
-            aslanpp_cookie_no_questionmark += cookie_no_questionmark
-            aslanpp_cookie_questionmark += cookie_questionmark
+            aslanpp_cookie_no_questionmark += cookie_no_questionmark[:-5]
+            aslanpp_cookie_questionmark += cookie_questionmark[:-5]
+
+            # save the mapping cookies
             concrete['cookies'] = cookie_mapping
         except KeyError:
             aslanpp_cookie_no_questionmark = "none"
@@ -210,8 +224,10 @@ def _parseHttpRequestResponse(model, http_request, http_response, protocol):
             
             # parse the parameters and retrieve ASLan++ code, constants, variables and mapping
             aslanpp_cookie2_no_questionmark, aslanpp_cookie2_questionmark, cookie2_mapping = _parse_parameters(model, cookies)
-            aslanpp_cookie2_no_questionmark += cookie_no_questionmark
-            aslanpp_cookie2_questionmark += cookie_questionmark
+            aslanpp_cookie2_no_questionmark += cookie_no_questionmark[:-5]
+            aslanpp_cookie2_questionmark += cookie_questionmark[:-5]
+
+            # save the mapping cookies
             concrete['cookies'] = cookie2_mapping
 
         except KeyError:
@@ -229,8 +245,7 @@ def _parseHttpRequestResponse(model, http_request, http_response, protocol):
 
         model._client_branch += client_skeleton.format(page,
                 aslanpp_params_no_questionmark,
-                aslanpp_cookie_no_questionmark, returntag, return_page, "none",
-                aslanpp_cookie2_questionmark, returntag)
+                aslanpp_cookie_no_questionmark, returntag, return_page, returntag)
 
         model._concretization[returntag] = concrete
         
@@ -249,19 +264,19 @@ def _parseHttpRequestResponse(model, http_request, http_response, protocol):
 def _parse_parameters( model, line_parsed):
     """ Translates line_parsed in ASLan++ and returns the ASLan++ code, constants, variables and mapping. """
     global var_tag
+    global var_i 
     aslanpp_questionmark = ""
     aslanpp_no_questionmark = ""
     constants = set()
     variables = set()
     mapping = dict()
-    i = 0
     for c in line_parsed:
         # replace non alphanumeric char with nothing
         key = re.sub("[^a-zA-Z0-9]","", c[0].lower())
         # replace begining of key if it doesn't start with a lower case letter
         key = re.sub("^[^a-z]","", key)
-        value = "{}{}".format(var_tag, i)
-        i += 1
+        value = "{}{}".format(var_tag, var_i)
+        var_i += 1
 
         # ASLan++ constants and variables
         model._params_constants.add(key)
@@ -275,7 +290,6 @@ def _parse_parameters( model, line_parsed):
 
         # concretization mapping
         mapping[c[0]] = [key, value]
-
     return aslanpp_no_questionmark, aslanpp_questionmark, mapping
 
 def _parse_database(model):

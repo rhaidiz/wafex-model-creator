@@ -16,7 +16,6 @@ entity Environment {
 		sqli_bypass, sqli, sqli_write, sqli_read: text; 			%sql injection payload
 		path_injection: text; 		%valid file
 		xss: text; 		% XSS payload
-		xss_hijack: text;
 		evil_file: text; 		%valid file
 		honest, webapplication, database,filesystem: agent;
 		nonpublic secureFile: text;
@@ -27,6 +26,8 @@ entity Environment {
 
 		eq, emp : text;	% used as separator
 		nonpublic sanitized(message) : message;
+
+		nonpublic client_xss(message) : fact;
 
 
 		%DBMS
@@ -70,27 +71,20 @@ entity Environment {
 		@tags
 
 	clauses
-		%DBMS (behavior)
+		% database vulns
+		db_hc_ev(M)  : inDB(M) :- M=sqli.?;
 
-		%evil behavior
-		db_hc_ev(M)  : inDB((sqli.?).M);
-		db_hc_ev_2(M): inDB(sqli.?);
-		db_hc_ev_3(M): inDB(sqli);
+		db_hc_ev_write(M)  : inDB_write(M) :- M=sqli_write.?;
 
-		db_hc_ev_write(M)  : inDB_write((sqli_write.?).M);
-		db_hc_ev_write2(M): inDB_write(sqli_write.?);
-		db_hc_ev_write3(M): inDB_write(sqli_write);
+		db_hc_ev_read(M)  : inDB_read(M) :- M=sqli_read.?;
 
-		db_hc_ev_read(M)  : inDB_read((sqli_read.?).M);
-		db_hc_ev_read2(M): inDB_read(sqli_read.?);
-		db_hc_ev_read3(M): inDB_read(sqli_read);
+		db_hc_ev_bypass(M)  : inDB_bypass(M) :- M=sqli_bypass.?;
 
-		db_hc_ev_bypass(M)  : inDB_bypass((sqli_bypass.?).M);
-		db_hc_ev_bypass2(M): inDB_bypass(sqli_bypass.?);
-		db_hc_ev_bypass3(M): inDB_bypass(sqli_bypass);
+		% client side vulns
+		db_hc_ev_xss(M) : client_xss(M) :- M=xss.?;
 
-		%FILESYSTEM (behavior)
-		fs_hc_ev(M)  : inFS(path_injection.M);
+		% file-system vulns
+		fs_hc_ev(M)  : inFS(M) :- M=path_injection.?;
 
 entity Session(Honest, Webapplication, Database, Filesystem: agent) {
 
@@ -116,11 +110,11 @@ entity Session(Honest, Webapplication, Database, Filesystem: agent) {
   entity Honest(Actor, Webapplication : agent){
 	
 		symbols
-		  Response, RResponse, Something : message;
-			Page, Params, Cookie, Tag : message;
-			Redirect, Hijack, Body : message;
-			WebNonce : text;
-			nonpublic requestSent(message, message): fact;
+			WebNonce : nonce;
+			Page : page;
+			Cookie : cookie;
+			Params, Body : message;
+			Tag : text;
 			@webappsymbols
 		
 		body{
@@ -137,34 +131,13 @@ entity Session(Honest, Webapplication, Database, Filesystem: agent) {
 									Cookie := ?;
 									WebNonce := fresh();
 									Actor *->* Webapplication : http_request(Page,Params,Cookie).Tag.WebNonce;
-									requestSent(Tag, WebNonce);
+									Webapplication *->* Actor : http_response(?Page, ?Body, ?Cookie).Tag.WebNonce;
+									hknows->add(Cookie);
+									if(client_xss(Body)){
+										Actor -> i : hknows;
+									}
 								}
 
-								% general rule for the honest user when he receive something
-								% from the web application after sending a request
-								on(Webapplication *->* Actor : http_response(?Page, ?Body, ?Cookie).WebNonce):{
-									select{ on(requestSent(Tag, WebNonce)):{
-								select{ on(Body = xss.?Redirect):{
-												Params := ?;
-												Cookie := ?;
-												Tag := ?;
-												WebNonce := fresh();
-												% redirecting the user aka CSRF
-												Actor *->* Webapplication : http_request(Redirect,Params,Cookie).Tag.WebNonce;
-												redirect(Redirect);
-												Webapplication *->* Actor : http_response(?Page,?Body, ?Cookie).Tag.WebNonce;
-												hknows->add(Page);
-												hknows->add(Body);
-												hknows->add(Cookie);
-											}
-											% XSS for stealing the user's knowledge
-											on (RResponse = xss_hijack.?Hijack):{
-												Actor *->* i : hknows;
-											}
-										}
-									}}
-								}
-								
 						} %end select
 				} %end while
 		} % end body
