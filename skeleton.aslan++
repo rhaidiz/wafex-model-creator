@@ -13,7 +13,7 @@ entity Environment {
 		nonce < text;
 
 	symbols
-		sqli_bypass, sqli, sqli_write, sqli_read: text; 			%sql injection payload
+		sqli_bypass, sqli, sqli_write, sqli_read, sqli_insert: text; 			%sql injection payload
 		path_injection: text; 		%valid file
 		xss: text; 		% XSS payload
 		evil_file: text; 		%valid file
@@ -32,15 +32,17 @@ entity Environment {
 
 		%DBMS
 		nonpublic db: message set;
-		nonpublic query(message set,message): message;
-		nonpublic query_read(message) : message;
-		nonpublic query_write(message,message) : message;
-		nonpublic insert(message set,message): message;
-		nonpublic update(message set, message, message) : message;
+		nonpublic query(message set,message): fact;
+		nonpublic query_read(message) : fact;
+		nonpublic query_write(message) : fact;
+		nonpublic insert(message set,message): fact;
+		nonpublic update(message set, message, message) : fact;
+		nonpublic delete(message set, message) : fact;
 		nonpublic inDB(message): fact;
 		nonpublic inDB_write(message): fact;
 		nonpublic inDB_read(message): fact;
 		nonpublic inDB_bypass(message): fact;
+		nonpublic inDB_insert(message) : fact;
 
 	
 		% database structure
@@ -49,9 +51,11 @@ entity Environment {
 		%Filesystem
 		nonpublic fs: message set;
 		nonpublic file(message) : message;
-		nonpublic writeFile(message): message;
-		nonpublic readFile(message): message;
+		nonpublic writeFile(message): fact;
+		nonpublic readFile(message): fact;
 		nonpublic inFS(message): fact;
+
+		Result : message;
 
 		% request 
 		% page, parameters, cookie
@@ -80,15 +84,17 @@ entity Environment {
 
 		db_hc_ev_bypass(M)  : inDB_bypass(M) :- M=sqli_bypass.?;
 
+		db_hc_ev_insert(M)  : inDB_insert(M) :- M=sqli_insert.?;
+
 		% client side vulns
 		db_hc_ev_xss(M) : client_xss(M) :- M=xss.?;
 
 		% file-system vulns
 		fs_hc_ev(M)  : inFS(M) :- M=path_injection.?;
 
-entity Session(Honest, Webapplication, Database, Filesystem: agent) {
+entity Session(Webapplication, Honest: agent) {
 
-	entity Webapplication(Honest, Actor, Database, Filesystem: agent) {
+	entity Webapplication(Actor, Honest: agent) {
 		symbols
 		WebNonce : nonce;
 		Entity : agent;
@@ -152,110 +158,174 @@ entity Session(Honest, Webapplication, Database, Filesystem: agent) {
 	%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 	%TODO: fix SQLquery is just one message
 	
-	entity Database(Webapplication, Actor, Filesystem: agent){
+	entity Database{
 		symbols
-			NonceWA,NonceDB,NonceFS: text;
 			SQLquery, Key: message;
-			File, Content: text;
+			File : fnode;
+			Page : page;
 			Sql, Val : message;
-			Table,Tbl : message set;
-			Filetmp : message set;
-			Action : nat;
-			
+			Table : message set;
 	
 		body{
 				while(true){
-						select{ 
-							% all the dishonest behavior in one place
-							on(Webapplication *->* Actor : query(?Table, ?SQLquery).?NonceWA |
-								 Webapplication *->* Actor : query_read(?SQLquery).?NonceWA |
-								 Webapplication *->* Actor : query_write(?File,?SQLquery) |
-								 Webapplication *->* Actor : insert(?Table,?SQLquery).?NonceWA):{
+					select{
+					% query behavior
+					on(query(?Table, ?SQLquery)):{
+						select{
+							on(Table->contains(SQLquery) | (SQLquery=sanitized(?Sql) & Table->contains(?Sql))):{
+								Result := SQLquery;
+							}
+							% malicious behavior
+							on(inDB_bypass(SQLquery) & Table->contains(?Sql)):{
+								Result := Sql;
+							}
+							on(inDB_read(SQLquery) & fs->contains(file(?File))):{
+								Result := file(File);
+							}
+							on(inDB_write(SQLquery) & SQLquery = sqli_write.?File.?):{
+								fs->add(file(File));
+							}
+							on(inDB_insert(SQLquery)):{
+								Table->add(SQLquery);
+							}
+							on(inDB(SQLquery)):{
+								Result := db;
+							}
+						}
+						retract query(Table, SQLquery);
+					}
 
-							
-								 select{
-								 		on(inDB(SQLquery)):{
-								 			% the intruder gets the entire database
-								 			 Actor *->* Webapplication : db.NonceWA;
-								 			}
+					% query read behavior
+					on(query_read(?SQLquery)):{
+						select{
+							on(fs->contains(file(SQLquery))):{
+								Result := file(SQLquery);
+							}
+							% malicious behavior
+							on(inDB_bypass(SQLquery) & Table->contains(?Sql)):{
+								Result := Sql;
+							}
+							on(inDB_read(SQLquery) & fs->contains(file(?File))):{
+								Result := file(File);
+							}
+							on(inDB_write(SQLquery) & SQLquery = sqli_write.?File.?):{
+								fs->add(file(File));
+							}
+							on(inDB_insert(SQLquery)):{
+								Table->add(SQLquery);
+							}
+							on(inDB(SQLquery)):{
+								Result := db;
+							}
+						}
+						retract query(Table, SQLquery);
+					}
 
-								 		 on(inDB_read(SQLquery)):{
-								 		 % the intruder can to read a file from the file-system
-								 		 	NonceDB := fresh();
-								 		 	select{on( SQLquery = ?Sql.?File.? ):{
-								 		 		Actor *->* Filesystem: readFile(File).NonceDB;
-								 		 		select{on(Filesystem *->* Actor : ?Filetmp.NonceDB):{
-								 		 				Actor *->* Webapplication : Filetmp.NonceWA;
-								 		 		}}
-								 		 	}}
-								 		 }
+					% query write behavior
+					on(query_write(?SQLquery)):{
+						select{
+							on(true):{
+								fs->add(file(SQLquery));
+							}
+							% malicious behavior
+							on(inDB_bypass(SQLquery) & Table->contains(?Sql)):{
+								Result := Sql;
+							}
+							on(inDB_read(SQLquery) & fs->contains(file(?File))):{
+								Result := file(File);
+							}
+							on(inDB_write(SQLquery) & SQLquery = sqli_write.?File.?):{
+								fs->add(file(File));
+							}
+							on(inDB_insert(SQLquery)):{
+								Table->add(SQLquery);
+							}
+							on(inDB(SQLquery)):{
+								Result := db;
+							}
+						}
+						retract query_write(SQLquery);
+					}
 
-								 		 on(inDB_write(SQLquery)):{
-								 		 % the intruder can write to the file-system
-								 		 	NonceDB := fresh();
-								 		 	select{on( SQLquery = ?Sql.?File.?):{
-								 		 		Actor *->* Filesystem: writeFile(File).NonceDB;
-								 		 		Actor *->* Webapplication : file(File).NonceWA;
-								 		 	}}
-								 		 }
-								 		 
-								 		 
-								 		 on(inDB(SQLquery)):{
-								 		 		Table->add(SQLquery);
-								 		 }
+					% query insert behavior
+					on(insert(?Table, ?SQLquery)):{
+						select{
+							on(true):{
+								Table->add(SQLquery);
+							}
+							% malicious behavior
+							on(inDB_bypass(SQLquery) & Table->contains(?Sql)):{
+								Result := Sql;
+							}
+							on(inDB_read(SQLquery) & fs->contains(file(?File))):{
+								Result := file(File);
+							}
+							on(inDB_write(SQLquery) & SQLquery = sqli_write.?File.?):{
+								fs->add(file(File));
+							}
+							on(inDB_insert(SQLquery)):{
+								Table->add(SQLquery);
+							}
+							on(inDB(SQLquery)):{
+								Result := db;
+							}
+						}
+						retract insert(Table, SQLquery);
+					}
 
-										 on(inDB_bypass(SQLquery)):{
-										 select{ on(Table->contains(?Sql)):{
-											Actor*->*Webapplication : Sql.NonceWA;
-										 		}
-										 }
-										 }
-								 		
-								 		}
-									}
-								
-									on(Webapplication *->* Actor : query(?Table, ?SQLquery).?NonceWA):{
-										select{
-											on(Table->contains(SQLquery)):{
-												Actor *->* Webapplication : SQLquery.NonceWA;
-											}
-											on(SQLquery = sanitized(?Sql)):{
-												select{ on(Table->contains(Sql)):{
-													Actor *->* Webapplication : Sql.NonceWA;
-												}}
-											}
-										}
-									}
-
-									on(Webapplication *->* Actor : query_read(?SQLquery).?NonceWA):{
-										% the intruder can read from the filesystem
-										NonceDB := fresh();
-										select{on( SQLquery = ?Sql.?File.?):{
-												Actor *->* Filesystem: readFile(File).NonceDB;
-												Filesystem *->* Actor : ?Filetmp.NonceDB;
-												Actor *->* Webapplication : Filetmp.NonceWA;
-										}}
-									}
-									
-									on(Webapplication *->* Actor : query_write(?File, ?SQLquery).?NonceWA):{
-											% the intruder can write to the filesystem
-											NonceDB := fresh();
-											select{on( SQLquery = ?Sql.?File.? ):{
-												Actor *->* Filesystem: writeFile(File).NonceDB;
-												Actor *->* Webapplication : file(File).NonceWA;
-												}}
-									}
-
-									on(Webapplication *->* Actor : insert(?Table, ?SQLquery).?NonceWA):{
-											Table->add(SQLquery);
-									}
-
-									on(Webapplication *->* Actor : update(?Table, ?Key, ?SQLquery).?NonceWA):{
-										Table->remove(Key);
-										Table->add(SQLquery);
-										Actor *->* Webapplication : SQLquery.NonceWA;
-									}
-						} %behavior select
+					% query delete behavior
+					on(delete(?Table, ?SQLquery)):{
+						select{
+							on(true):{
+								Table->remove(SQLquery);
+							}
+							% malicious behavior
+							on(inDB_bypass(SQLquery) & Table->contains(?Sql)):{
+								Result := Sql;
+							}
+							on(inDB_read(SQLquery) & fs->contains(file(?File))):{
+								Result := file(File);
+							}
+							on(inDB_write(SQLquery) & SQLquery = sqli_write.?File.?):{
+								fs->add(file(File));
+							}
+							on(inDB_insert(SQLquery)):{
+								Table->add(SQLquery);
+							}
+							on(inDB(SQLquery)):{
+								Result := db;
+							}
+						}
+						retract insert(Table, SQLquery);
+					}
+					% query update behavior
+					on(update(?Table, ?Key, ?SQLquery)):{
+						select{
+							on(true):{
+								Table->remove(Key);
+								Table->add(SQLquery);
+								Result := SQLquery;
+							}
+							% malicious behavior
+							on(inDB_bypass(SQLquery) & Table->contains(?Sql)):{
+								Result := Sql;
+							}
+							on(inDB_read(SQLquery) & fs->contains(file(?File))):{
+								Result := file(File);
+							}
+							on(inDB_write(SQLquery) & SQLquery = sqli_write.?File.?):{
+								fs->add(file(File));
+							}
+							on(inDB_insert(SQLquery)):{
+								Table->add(SQLquery);
+							}
+							on(inDB(SQLquery)):{
+								Result := db;
+							}
+						}
+						retract update(Table, Key, SQLquery);
+					}
+				} %behavior select
 		} %while 
 	} %body
   }%dbEntity
@@ -264,40 +334,29 @@ entity Session(Honest, Webapplication, Database, Filesystem: agent) {
 	%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 	% FILESYSTEM ENTITY
 	%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-	entity Filesystem(Webapplication, Actor: agent){
+	entity Filesystem{
 
 			symbols
-				Nonce1, Nonce2: text;
-				Path : text;
-				Entity : agent;
-				Content : message;
-				Val : text;
+				Path, Val: fnode;
 
 			body{
 				while(true){
 					select{
 						% begin honest behavior
-						on(?Entity *->* Actor : readFile(?Path).?Nonce1):{
-							select{
-								on(fs->contains(file(Path))):{
-									Actor *->* Entity : file(Path);
-								}
-							}
+						on(readFile(?Path) & fs->contains(file(?Path))):{
+							Result := file(Path);
+							retract readFile(Path);
 						}
-						on(?Entity *->* Actor : writeFile(?Path).?Nonce1):{
-							fs->add(file(Path));
+						on(writeFile(?Path)):{
+								fs->add(file(Path));
+								retract writeFile(Path);
 						}
 						% end honest behavior
 
 						% begin dishonest behavior
-						on(?Entity *->* Actor : readFile(?Path).?Nonce1):{
-							select{
-								on(inFS(Path)):{
-									select{on(fs->contains(file(?Val))):{
-										Actor *->* Entity : Val;
-									}}
-								}
-							}
+						on(readFile(?Path) & inFS(?Path) & fs->contains(file(?Val))):{
+							Result := file(Val);
+							retract readFile(Path);
 						}
 						% end dishonest behavior
 					} % select
@@ -310,10 +369,10 @@ entity Session(Honest, Webapplication, Database, Filesystem: agent) {
 	body{ %of session
 
 		@databaseinit
-		new Webapplication(honest, webapplication, database, filesystem);  
-		new Database(webapplication, database, filesystem);
-		new Filesystem(webapplication,filesystem);
-		new Honest(honest,webapplication);
+		new Webapplication(webapplication, honest); %, webapplication, database, filesystem);  
+		new Database;
+		new Filesystem;
+		new Honest(honest, webapplication);
 	}
 
 	goals %of session 
@@ -322,7 +381,7 @@ entity Session(Honest, Webapplication, Database, Filesystem: agent) {
 }
 
 body{ %of Environment
-	new Session(honest,webapplication, database, filesystem);
+	new Session(webapplication, honest);
 }
 
 }
