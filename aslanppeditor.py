@@ -1,3 +1,4 @@
+import os
 import re
 
 from mycodearea import MyCodeArea
@@ -35,8 +36,10 @@ COMMENT_PATTERN = "%(.*)"
 
 PATTERN = "(?P<keyword>"+KEYWORD_PATTERN+")|(?P<brace>"+PARENT_PATTERN+")|(?P<comment>"+COMMENT_PATTERN+")|(?P<types>"+TYPES_PATTERN+")|(?P<cond>"+CONDITIONAL_PATTERN+")"
 
+current_path = os.path.dirname(os.path.abspath(__file__))
+
 # syntax highlight colors file for aslanpp
-ASLANPP_SYNTAX_HIGHLIGHT = "file:///Users/federicodemeo/Documents/Universita/PhD/WAFEx/wafex-model-creator/style-keywords.css"
+ASLANPP_SYNTAX_HIGHLIGHT = "file://{}/style-keywords.css".format(current_path)
 
 def computeHighlighting(text):
     lastKwEnd = 0
