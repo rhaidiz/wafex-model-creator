@@ -1,0 +1,42 @@
+.keyword {
+    -fx-fill: #e8503f;
+    -fx-font-weight: bold;
+}
+.types {
+    -fx-fill: #00a995;
+    -fx-font-weight: bold;
+}
+.semicolon {
+		-fx-fill: #656567;
+}
+.conditional {
+		-fx-fill: #db2d45;
+    -fx-font-weight: bold;
+}
+.paren {
+    -fx-fill: firebrick;
+}
+.bracket {
+    -fx-fill: darkgreen;
+}
+.brace {
+    -fx-fill: teal;
+}
+.string {
+    -fx-fill: #e4753e;
+}
+
+.comment {
+	-fx-fill: #aaaaaa;
+}
+
+.paragraph-box:has-caret {
+	/* background color of the current line */
+    -fx-background-color: white;
+}
+.styled-text-area {
+    /* set the entire area's font size to the given size */
+    -fx-font-size: 10pt;
+		-fx-background-color: #f7f7f7;
+}
+

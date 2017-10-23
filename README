@@ -1,1 +1,5 @@
 Burp extention for creating a model in WAFEx
+
+Requires
+	- requests
+	- richtextfx

@@ -4,8 +4,13 @@ channel_model CCM
 entity Environment {
  
 
- types
-		mytype < message;
+	types
+		cookie < text;
+		param < text;
+		fnode < param;
+		page < fnode;
+		sess < text;
+		nonce < text;
 
 	symbols
 		sqli_bypass, sqli, sqli_write, sqli_read: text; 			%sql injection payload
@@ -20,9 +25,8 @@ entity Environment {
 		nonpublic hknows : message set;
 
 
-		s : text;
+		eq, emp : text;	% used as separator
 		nonpublic sanitized(message) : message;
-		redirect(message) : fact;
 
 
 		%DBMS
@@ -59,8 +63,8 @@ entity Environment {
 		% none parameter
 		none : text;
 
-		@publicconstants
-		@nonpublicconstants
+		@pages
+		@params
 		
 		% messages tagss
 		@tags
@@ -92,7 +96,7 @@ entity Session(Honest, Webapplication, Database, Filesystem: agent) {
 
 	entity Webapplication(Honest, Actor, Database, Filesystem: agent) {
 		symbols
-		WebNonce : text;
+		WebNonce : nonce;
 		Entity : agent;
 		@webappsymbols
 		body{
