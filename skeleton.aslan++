@@ -13,12 +13,11 @@ entity Environment {
 		nonce < text;
 
 	symbols
-		sqli_bypass, sqli, sqli_write, sqli_read, sqli_insert: text; 			%sql injection payload
-		path_injection: text; 		%valid file
-		xss: text; 		% XSS payload
-		evil_file: text; 		%valid file
-		honest, webapplication, database,filesystem: agent;
-		nonpublic secureFile: text;
+		sqli_bypass, sqli, sqli_write, sqli_read, sqli_insert: param; 			%sql injection payload
+		path_injection: param; 		%valid file
+		xss: param; 		% XSS payload
+		evil_file: fnode; 		%valid file
+		honest, webapplication : agent;
 
 		% Honest entity
 		nonpublic hknows : message set;
@@ -337,7 +336,8 @@ entity Session(Webapplication, Honest: agent) {
 	entity Filesystem{
 
 			symbols
-				Path, Val: fnode;
+				Path ; message;
+				Val: fnode;
 
 			body{
 				while(true){

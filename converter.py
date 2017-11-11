@@ -69,7 +69,7 @@ def _generateWAFExModel(model):
         else:
             skeleton = skeleton.replace("@tags", "")
         if model._params_webapp_variables:
-            variables = ", ".join(item for item in model._params_webapp_variables) + " : param;"
+            variables = ", ".join(item for item in model._params_webapp_variables) + " : messages;"
             skeleton = skeleton.replace("@webappsymbols",variables)
         else:
             skeleton = skeleton.replace("@webappsymbols","")
