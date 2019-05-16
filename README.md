@@ -11,12 +11,10 @@ WAFEx Model Creator is an extension for Burp Proxy that allows for the simple ex
 
 ## Installation
 1. Clone the repository
-
-
+<!-- -->
     git clone https://github.com/rhaidiz/wafex-model-creator
 2. Install `http-parser` (make sure you install it for Python2.7):
-
-
+<!-- -->
     pip install http-parser
 3. Burp Suite -> Extender -> Options
 	* Python Environment -> Location of Jython standalone JAR file: load jython standalone.
